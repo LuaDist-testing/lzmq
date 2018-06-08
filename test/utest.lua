@@ -85,7 +85,7 @@ end
 
 local ECHO_ADDR = "inproc://echo"
 
-local _ENV = TEST_CASE'interface'         if true then
+local _ENV = TEST_CASE'interface'            if true then
 
 function setup() end
 
@@ -221,9 +221,17 @@ function test_interface()
   if zmq.proxy then assert_function(zmq.proxy) end
 end
 
+function test_version()
+  local version = assert_table(zmq.version())
+  local major,minor,patch = assert_number(zmq.version(true))
+  assert_equal(major, version[1])
+  assert_equal(minor, version[2])
+  assert_equal(patch, version[3])
 end
 
-local _ENV = TEST_CASE'ctx/skt interface' if true then
+end
+
+local _ENV = TEST_CASE'ctx/skt interface'    if true then
 
 local ctx, skt
 
@@ -258,6 +266,7 @@ function test_context()
 end
 
 function test_socket()
+  assert_function(skt.context)
   assert_function(skt.bind)
   assert_function(skt.unbind)
   assert_function(skt.connect)
@@ -390,6 +399,28 @@ function test_socket_options()
   assert_true(skt:set_unsubscribe("sub 3"))
 end
 
+function test_socket_options_ctor()
+  assert_true(skt:close())
+  skt = assert(is_zsocket(ctx:socket(zmq.SUB,{
+    subscribe = { "sub 1", "sub 2", "sub 3" };
+    linger    = 123;
+  })))
+  ctx:autoclose(skt)
+  assert_true(skt:set_unsubscribe{"sub 1", "sub 2"})
+  assert_equal(123, skt:get_linger())
+end
+
+function test_socket_options2_ctor()
+  assert_true(skt:close())
+  skt = assert(is_zsocket(ctx:socket{zmq.SUB,
+    subscribe = { "sub 1", "sub 2", "sub 3" };
+    linger    = 123;
+  }))
+  ctx:autoclose(skt)
+  assert_true(skt:set_unsubscribe{"sub 1", "sub 2"})
+  assert_equal(123, skt:get_linger())
+end
+
 function test_context_options()
   assert_true(ctx:set_io_threads(2))
   assert_equal(2, ctx:get_io_threads())
@@ -415,9 +446,31 @@ function test_context_options()
   assert_true(ctx:closed())
 end
 
+function test_context_options_on_ctor()
+  assert_true(ctx:destroy())
+  ctx = assert(is_zcontext(zmq.context{
+    io_threads  = 2;
+    max_sockets =252;
+  }))
+  assert_equal(2, ctx:get_io_threads())
+  assert_equal(252, ctx:get_max_sockets())
 end
 
-local _ENV = TEST_CASE'context'           if true then
+function test_context_options_fail_on_ctor()
+  assert_true(ctx:destroy())
+  local ctx, err = zmq.context{
+    max_sockets = -1;
+  }
+  assert_nil(ctx, err)
+end
+
+function test_socket_context()
+  assert_equal(ctx, skt:context())
+end
+
+end
+
+local _ENV = TEST_CASE'context'              if true then
 
 local ctx, skt
 
@@ -434,8 +487,13 @@ function test_context_shutdown()
     return skip("shutdown support since ZMQ 4.0.0")
   end
 
-  skt = assert(is_zsocket(ctx:socket(zmq.SUB)))
+  local ptr  = assert(is_zcontext_ud(ctx:lightuserdata()))
+  local ctx2 = assert(is_zcontext(zmq.init_ctx(ptr)))
+
+  -- to prevent autoclose socket
+  skt = assert(is_zsocket(ctx2:socket(zmq.SUB)))
   skt:set_rcvtimeo(1)
+
   local ok, err = skt:recv()
   assert(not ok, 'EAGAIN expected got: ' .. tostring(ok))
   assert(error_is(err, zmq.errors.EAGAIN))
@@ -467,7 +525,7 @@ end
 
 end
 
-local _ENV = TEST_CASE'socket autoclose'  if true then
+local _ENV = TEST_CASE'socket autoclose'     if true then
 
 local ctx, skt
 
@@ -481,8 +539,8 @@ end
 function test_socket_autoclose()
   ctx = assert(is_zcontext(zmq.context()))
   skt = assert(is_zsocket(ctx:socket(zmq.SUB)))
-  assert_equal(socket_count(ctx, 1))
   ctx:autoclose(skt)
+  assert_equal(socket_count(ctx, 1))
   assert_true(ctx:destroy())
   assert_true(skt:closed())
 
@@ -511,9 +569,28 @@ function test_socket_autoclose()
   assert_true(ctx:destroy())
 end
 
+function test_socket_autoclose_poller()
+  ctx = assert(is_zcontext(zmq.context()))
+
+  local poller = zpoller.new(1)
+  local ptr
+  do 
+    local skt = assert(is_zsocket(ctx:socket(zmq.SUB)))
+    assert_equal(socket_count(ctx, 1))
+
+    poller:add(skt, zmq.POLLIN, function() end)
+    poller:remove(skt)
+    ptr = weak_ptr(skt)
+  end
+  gc_collect()
+  assert_nil(ptr.value)
+  assert_equal(socket_count(ctx, 0))
+  assert_true(ctx:destroy())
 end
 
-local _ENV = TEST_CASE'message'           if true then
+end
+
+local _ENV = TEST_CASE'message'              if true then
 
 local msg
 
@@ -674,7 +751,7 @@ end
 
 end
 
-local _ENV = TEST_CASE'bind/connect'      if true then
+local _ENV = TEST_CASE'bind/connect'         if true then
 
 local ctx, pub, sub1, sub2, sub3, msg
 
@@ -763,7 +840,60 @@ end
 
 end
 
-local _ENV = TEST_CASE'Send Recv'         if true then
+local _ENV = TEST_CASE'bind/connect on ctor' if true then
+
+local ctx, pub, sub, msg
+
+function setup()
+  ctx = assert(is_zcontext(zmq.context()))
+end
+
+function teardown()
+  if pub then pub:close()   end
+  if sub then sub:close()   end
+  if ctx then ctx:destroy() end
+end
+
+function test_connect()
+  pub = assert(is_zsocket(ctx:socket(zmq.PUB,{
+    bind = {
+      "inproc://pub.test.1";
+      "inproc://pub.test.2";
+      "inproc://pub.test.3";
+    };
+  })))
+  ctx:autoclose(pub)
+
+  sub = assert(is_zsocket(ctx:socket(zmq.SUB,{
+    subscribe = "", rcvtimeo = 100;
+    connect = "inproc://pub.test.1";
+  })))
+  ctx:autoclose(sub)
+
+  wait()
+
+  assert_true(pub:send("hello"))
+  assert_equal( "hello", assert_string(sub:recv()))
+end
+
+function test_fail_bind()
+  local err, str
+  pub, err, str = ctx:socket(zmq.PUB,{
+    bind = {
+      "inproc://pub.test.1";
+      "inproc://pub.test.2";
+      "inproc://pub.test.3";
+      "error address"
+    };
+  })
+  assert_nil(pub)
+  assert_equal("error address", str)
+  assert_equal(socket_count(ctx, 0))
+end
+
+end
+
+local _ENV = TEST_CASE'Send Recv'            if true then
 
 local ctx, pub, sub, msg
 
@@ -808,6 +938,14 @@ function test_recv_len()
   assert_equal(("0"):rep(8), str, more)
   assert_false(more)
   assert_equal(8, len)
+end
+
+function test_recv_len_0()
+  assert_true(pub:send(("0"):rep(32)))
+
+  local str, more, len = assert_equal("", sub:recv_len(0))
+  assert_false(more)
+  assert_equal(32, len)
 end
 
 function test_recv_msg()
@@ -892,9 +1030,65 @@ function test_recv_all()
   assert_equal('hello, world', table.concat(t))
 end
 
+function test_sendx()
+  assert_true(pub:sendx('hello', ', ', 'world'))
+  local a,b,c = assert_string(sub:recvx())
+  assert_string(b)
+  assert_string(c)
+  assert_equal('hello, world', a .. b .. c)
 end
 
-local _ENV = TEST_CASE'loop'              if true then
+function test_sendx_more()
+  assert_true(pub:sendx_more('hello', ', '))
+  assert_true(pub:send('world'))
+  local a,b,c = assert_string(sub:recvx())
+  assert_string(b)
+  assert_string(c)
+  assert_equal('hello, world', a .. b .. c)
+end
+
+function test_send_all_wrong_flag()
+  local ok, err = pub:send_all({'hello', ', ', 'world'}, zmq.DONTWAIT)
+  assert_nil(ok)
+  assert(error_is(err, zmq.errors.ENOTSUP))
+end
+
+function test_send_all_more()
+  assert_true(pub:send_all({'hello', ', '},zmq.SNDMORE))
+  assert_true(pub:send('world'))
+  local t = assert_table(sub:recv_all())
+  assert_equal(3, #t)
+  assert_equal('hello, world', table.concat(t))
+end
+
+function test_send_all_position()
+  local msg = {
+    [-1] = 'hello';
+    [ 0] = ', ';
+    [ 1] = 'world';
+  }
+  
+  local ok, err = pub:send_all(msg, 0, -1, 1)
+  local t = assert_table(sub:recv_all())
+  assert_equal(3, #t)
+  assert_equal('hello, world', table.concat(t))
+end
+
+function test_send_all_hole()
+  assert_error(function()
+    pub:send_all({"1", nil, "2"}, 0, 1, 3)
+  end)
+end
+
+function test_sendx_hole()
+  assert_error(function()
+    pub:sendx("1", nil, "2")
+  end)
+end
+
+end
+
+local _ENV = TEST_CASE'loop'                 if true then
 
 local loop, timer
 
@@ -1034,7 +1228,7 @@ end
 
 end
 
-local _ENV = TEST_CASE'timer'             if true then
+local _ENV = TEST_CASE'timer'                if true then
 
 local timer
 
@@ -1147,7 +1341,7 @@ end
 
 end
 
-local _ENV = TEST_CASE'poller'            if true then
+local _ENV = TEST_CASE'poller'               if true then
 local ctx, pub, sub1, sub2, sub3, msg
 local poller
 local names
@@ -1252,6 +1446,189 @@ function test_remove_on_poll()
   ret = t[sub2] assert_table(ret) assert_equal("hello", ret[1]) assert_equal(false, ret[2])
   ret = t[sub3] assert_table(ret) assert_equal("hello", ret[1]) assert_equal(false, ret[2])
 end
+
+end
+
+local _ENV = TEST_CASE'z85 encode'           if true and zmq.z85_encode then
+
+local key_bin = "\084\252\186\036\233\050\073\150\147\022\251\097\124\135\043\176" ..
+                "\193\209\255\020\128\004\039\197\148\203\250\207\027\194\214\082"
+
+local key_txt = "rq:rM>}U?@Lns47E1%kR.o@n%FcmmsL/@{H8]yf7";
+
+local function dump(str)
+  return (string.gsub(str,".", function(ch)
+    return (string.format("\\%.3d", string.byte(ch)))
+  end))
+end
+
+function test_encode()
+  local encoded = assert_string(zmq.z85_encode(key_bin))
+  assert_equal(key_txt, encoded)
+end
+
+function test_decode()
+  local decoded = assert_string(zmq.z85_decode(key_txt))
+  assert_equal(dump(key_bin), dump(decoded))
+end
+
+function test_encode_wrong_size()
+  assert_error(function() zmq.z85_encode(key_bin .. "1") end)
+end
+
+function test_decode_wrong_size()
+  assert_error(function() zmq.z85_decode(key_txt .. "2") end)
+end
+
+end
+
+local _ENV = TEST_CASE'curve keypair'        if true and zmq.curve_keypair then
+
+function test_generate_z85()
+  local pub, sec = zmq.curve_keypair()
+  if not pub then
+    assert(error_is(sec, zmq.errors.ENOTSUP))
+    return skip("you need build libzmq with libsodium")
+  end
+  assert_string(pub)
+  assert_string(sec)
+  assert_equal(40, #pub)
+  assert_equal(40, #sec)
+end
+
+function test_generate_bin()
+  local pub, sec = zmq.curve_keypair(true)
+  if not pub then
+    assert(error_is(sec, zmq.errors.ENOTSUP))
+    return skip("you need build libzmq with libsodium")
+  end
+  assert_string(pub)
+  assert_string(sec)
+  assert_equal(32, #pub)
+  assert_equal(32, #sec)
+end
+
+end
+
+local _ENV = TEST_CASE'monitor'              if true then
+
+local loop, timer
+
+function setup()
+  loop  = assert(zloop.new())
+  timer = ztimer.monotonic()
+end
+
+function teardown()
+  loop:destroy()
+  wait(500) -- for TCP time to release IP address
+end
+
+function test_monitor()
+  local counter = 0
+  local monitor_called = false
+  local address = "<NOT ACCEPTED>"
+
+  local function echo(skt)
+    local msg = assert_table(skt:recv_all())
+    assert_true(skt:send_all(msg))
+    counter = counter + 1
+  end
+
+  local srv = assert(is_zsocket(loop:create_socket(zmq.REP, {
+    linger = 0, sndtimeo = 100, rcvtimeo = 100;
+    bind = {
+      "inproc://test.zmq";
+      "tcp://*:9000";
+    }
+  })))
+  loop:add_socket(srv, echo)
+
+  if not srv.monitor then
+    return skip("this version of LZMQ does not support socket monitor")
+  end
+
+  if not srv.recv_event then
+    return skip("this version of LZMQ does not support receive event")
+  end
+
+  local monitor_endpoint = assert_string(srv:monitor())
+
+  assert(is_zsocket(loop:add_new_connect(zmq.PAIR, monitor_endpoint, function(sok)
+    monitor_called = true
+    local event, data, addr = sok:recv_event()
+    assert_number(event, data)
+    assert_number(data)
+    if addr then assert_string(addr) end
+
+    if event == zmq.EVENT_ACCEPTED then
+      address = addr
+    end
+  end)))
+
+  wait()
+
+  local cli = assert(is_zsocket(loop:create_socket(zmq.REQ, {
+    linger = 0, sndtimeo = 100, rcvtimeo = 100;
+    connect = "tcp://127.0.0.1:9000";
+  })))
+  loop:add_socket(cli, echo)
+
+  -- run ball
+  loop:add_once(10, function() cli:send_all{'hello', 'world'} end)
+
+  -- time to play
+  loop:add_once(500, function() loop:interrupt() end)
+
+  loop:start()
+
+  loop:destroy()
+
+  assert_true(monitor_called)
+  assert_string(address)
+  assert_match("^tcp://%d+%.%d+%.%d+%.%d+:%d+$", address)
+end
+
+function test_monitor_with_addr()
+  local srv = assert(is_zsocket(loop:create_socket(zmq.REP)))
+  if not srv.monitor then
+    return skip("this version of LZMQ does not support socket monitor")
+  end
+
+  local addr = "inproc://lzmq.monitor.test"
+  assert_equal(addr, srv:monitor(addr))
+end
+
+function test_monitor_with_wrong_addr()
+  local srv = assert(is_zsocket(loop:create_socket(zmq.REP)))
+  if not srv.monitor then
+    return skip("this version of LZMQ does not support socket monitor")
+  end
+
+  local addr = "lzmq.monitor.test"
+  local ok, err = srv:monitor(addr)
+  assert_nil(ok)
+  assert(error_is(err, zmq.errors.EINVAL))
+end
+
+function test_monitor_without_addr()
+  local srv = assert(is_zsocket(loop:create_socket(zmq.REP)))
+  if not srv.monitor then
+    return skip("this version of LZMQ does not support socket monitor")
+  end
+
+  assert_match("^inproc://lzmq%.monitor%.[0-9a-fA-FxX]+$", srv:monitor())
+end
+
+function test_monitor_without_addr_with_event()
+  local srv = assert(is_zsocket(loop:create_socket(zmq.REP)))
+  if not srv.monitor then
+    return skip("this version of LZMQ does not support socket monitor")
+  end
+
+  assert_match("^inproc://lzmq%.monitor%.[0-9a-fA-FxX]+$", srv:monitor(1))
+end
+
 
 end
 

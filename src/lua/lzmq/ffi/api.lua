@@ -107,7 +107,17 @@ ffi.cdef[[
   int zmq_device (int type, void *frontend, void *backend);
 ]]
 
+ffi.cdef[[
+  char *zmq_z85_encode (char *dest, const char *data, size_t size);
+  char *zmq_z85_decode (char *dest, const char *string);
+  int zmq_curve_keypair (char *z85_public_key, char *z85_secret_key);
+]]
+
 local aint_t          = ffi.typeof("int[1]")
+local aint16_t        = ffi.typeof("int16_t[1]")
+local auint16_t       = ffi.typeof("uint16_t[1]")
+local aint32_t        = ffi.typeof("int32_t[1]")
+local auint32_t       = ffi.typeof("uint32_t[1]")
 local aint64_t        = ffi.typeof("int64_t[1]")
 local auint64_t       = ffi.typeof("uint64_t[1]")
 local asize_t         = ffi.typeof("size_t[1]")
@@ -120,6 +130,8 @@ local vla_pollitem_t  = ffi.typeof("zmq_pollitem_t[?]")
 local zmq_pollitem_t  = ffi.typeof("zmq_pollitem_t")
 local pollitem_size   = ffi.sizeof(zmq_pollitem_t)
 local NULL            = ffi.cast(pvoid_t, 0)
+local int16_size      = ffi.sizeof("int16_t")
+local int32_size      = ffi.sizeof("int32_t")
 
 local function ptrtoint(ptr)
   return tonumber(ffi.cast(uintptr_t, ptr))
@@ -173,6 +185,12 @@ end
 
 end
 
+local ZMQ_VERSION_MAJOR, ZMQ_VERSION_MINOR, ZMQ_VERSION_PATCH = _M.zmq_version()
+assert(
+  ((ZMQ_VERSION_MAJOR == 3) and (ZMQ_VERSION_MINOR >= 2)) or (ZMQ_VERSION_MAJOR == 4),
+  "Unsupported ZMQ version: " .. ZMQ_VERSION_MAJOR .. "." .. ZMQ_VERSION_MINOR .. "." .. ZMQ_VERSION_PATCH
+)
+
 -- zmq_ctx_new, zmq_ctx_term, zmq_ctx_get, zmq_ctx_set
 do
 
@@ -212,6 +230,7 @@ end
 -- zmq_socket, zmq_close, zmq_connect, zmq_bind, zmq_unbind, zmq_disconnect,
 -- zmq_skt_setopt_int, zmq_skt_setopt_i64, zmq_skt_setopt_u64, zmq_skt_setopt_str,
 -- zmq_skt_getopt_int, zmq_skt_getopt_i64, zmq_skt_getopt_u64, zmq_skt_getopt_str
+-- zmq_socket_monitor
 do
 
 function _M.zmq_socket(ctx, stype)
@@ -303,6 +322,10 @@ end
 
 function _M.zmq_recvmsg(skt, msg, flags)
   return libzmq3.zmq_recvmsg(skt, msg, flags)
+end
+
+function _M.zmq_socket_monitor(skt, addr, events)
+  return libzmq3.zmq_socket_monitor(skt, addr, events)
 end
 
 end
@@ -401,6 +424,163 @@ end
 
 end
 
+-- zmq_z85_encode, zmq_z85_decode
+if pget(libzmq3, "zmq_z85_encode") then
+
+function _M.zmq_z85_encode(data)
+  local len = math.floor(#data * 1.25 + 1.0001)
+  local buf = ffi.new(vla_char_t, len)
+  local ret = libzmq3.zmq_z85_encode(buf, data, #data)
+  if ret == NULL then error("size of the block must be divisible by 4") end
+  return ffi.string(buf, len - 1)
+end
+
+function _M.zmq_z85_decode(data)
+  local len = math.floor(#data * 0.8 + 0.0001)
+  local buf = ffi.new(vla_char_t, len)
+  local ret = libzmq3.zmq_z85_decode(buf, data)
+  if ret == NULL then error("size of the block must be divisible by 5") end
+  return ffi.string(buf, len)
+
+end
+
+end
+
+-- zmq_curve_keypair
+if pget(libzmq3, "zmq_curve_keypair") then
+
+function _M.zmq_curve_keypair(as_binary)
+  local public_key = ffi.new(vla_char_t, 41)
+  local secret_key = ffi.new(vla_char_t, 41)
+  local rc = libzmq3.zmq_curve_keypair(public_key, secret_key)
+  if ret == -1 then return -1 end
+  if not as_binary then
+    return ffi.string(public_key, 40), ffi.string(secret_key, 40)
+  end
+  local public_key_bin = ffi.new(vla_char_t, 32)
+  local secret_key_bin = ffi.new(vla_char_t, 32)
+
+  libzmq3.zmq_z85_decode(public_key_bin, public_key)
+  libzmq3.zmq_z85_decode(secret_key_bin, secret_key)
+
+  return ffi.string(public_key_bin, 32), ffi.string(secret_key_bin, 32)
+end
+
+end
+
+do -- zmq_recv_event
+
+local function zmq_recv_buf(skt, len, flags)
+  local buf = ffi.new(vla_char_t, len)
+  local flen = libzmq3.zmq_recv(skt, buf, len, flags or 0)
+  if flen < 0 then return end
+  if len > flen then len = flen end
+  return buf, len, flen
+end
+
+if ZMQ_VERSION_MAJOR == 3 then
+  ffi.cdef([[
+    typedef struct {
+        int event;
+        union {
+        struct {
+            char *addr;
+            int fd;
+        } connected;
+        struct {
+            char *addr;
+            int err;
+        } connect_delayed;
+        struct {
+            char *addr;
+            int interval;
+        } connect_retried;
+        struct {
+            char *addr;
+            int fd;
+        } listening;
+        struct {
+            char *addr;
+            int err;
+        } bind_failed;
+        struct {
+            char *addr;
+            int fd;
+        } accepted;
+        struct {
+            char *addr;
+            int err;
+        } accept_failed;
+        struct {
+            char *addr;
+            int fd;
+        } closed;
+        struct {
+            char *addr;
+            int err;
+        } close_failed;
+        struct {
+            char *addr;
+            int fd;
+        } disconnected;
+        } data;
+    } zmq_event_t;
+  ]])
+  local zmq_event_t = ffi.typeof("zmq_event_t")
+  local event_size  = ffi.sizeof(zmq_event_t)
+
+  function _M.zmq_recv_event(skt, flags)
+    local msg = _M.zmq_msg_init()
+    if not msg then return end
+    local ret = _M.zmq_msg_recv(msg, skt, flags)
+    if ret == -1 then
+      _M.zmq_msg_close(msg)
+      return 
+    end
+    assert(_M.zmq_msg_size(msg) >= event_size)
+    assert(_M.zmq_msg_more(msg) == 0)
+
+    local event = ffi.new(zmq_event_t)
+    ffi.copy(event, _M.zmq_msg_data(msg), event_size)
+    local addr
+    if event.data.connected.addr ~= NULL then
+      addr = ffi.string(event.data.connected.addr)
+    end
+
+    _M.zmq_msg_close(msg)
+    return event.event, event.data.connected.fd, addr
+  end
+
+else
+  ffi.cdef([[
+    typedef struct {
+        uint16_t event;
+        int32_t  value;
+    } zmq_event_t;
+  ]])
+  local zmq_event_t  = ffi.typeof("zmq_event_t")
+  local event_size   = ffi.sizeof(zmq_event_t)
+
+  function _M.zmq_recv_event(skt, flags)
+    local buf, len, flen = zmq_recv_buf(skt, event_size, flags)
+    if not buf then return end
+    assert(len == (int16_size + int32_size))
+
+  
+    local addr = _M.zmq_recv(skt, 1025, _M.FLAGS.ZMQ_DONTWAIT)
+    if not addr then return end
+  
+    local event = ffi.new(auint16_t)
+    local value = ffi.new(aint32_t)
+    ffi.copy(event, buf, int16_size)
+    ffi.copy(value, buf + int16_size, int32_size)
+    return event[0], value[0], addr
+  end
+
+end
+
+end
+
 _M.ERRORS = require"lzmq.ffi.error"
 local ERRORS_MNEMO = {}
 for k,v in pairs(_M.ERRORS) do ERRORS_MNEMO[v] = k end
@@ -408,7 +588,6 @@ for k,v in pairs(_M.ERRORS) do ERRORS_MNEMO[v] = k end
 function _M.zmq_mnemoerror(errno)
   return ERRORS_MNEMO[errno] or "UNKNOWN"
 end
-
 
 do -- const
 
@@ -502,6 +681,30 @@ _M.SECURITY_MECHANISM = {
  ZMQ_CURVE = 2;
 }
 
+_M.EVENTS = {
+  ZMQ_EVENT_CONNECTED        = 1;
+  ZMQ_EVENT_CONNECT_DELAYED  = 2;
+  ZMQ_EVENT_CONNECT_RETRIED  = 4;
+  ZMQ_EVENT_LISTENING        = 8;
+  ZMQ_EVENT_BIND_FAILED      = 16;
+  ZMQ_EVENT_ACCEPTED         = 32;
+  ZMQ_EVENT_ACCEPT_FAILED    = 64;
+  ZMQ_EVENT_CLOSED           = 128;
+  ZMQ_EVENT_CLOSE_FAILED     = 256;
+  ZMQ_EVENT_DISCONNECTED     = 512;
+}
+
+if ZMQ_VERSION_MAJOR >= 4 then
+  _M.EVENTS.ZMQ_EVENT_MONITOR_STOPPED = 1024
+end
+
+do local ZMQ_EVENT_ALL = 0
+for _, v in pairs(_M.EVENTS) do
+  ZMQ_EVENT_ALL = ZMQ_EVENT_ALL + v
+end
+_M.EVENTS.ZMQ_EVENT_ALL = ZMQ_EVENT_ALL
+end
+
 end
 
 _M.ptrtoint = ptrtoint
@@ -512,11 +715,7 @@ _M.vla_pollitem_t = vla_pollitem_t
 _M.zmq_pollitem_t = zmq_pollitem_t
 _M.NULL           = NULL
 _M.bit            = bit
-
-local ZMQ_MAJOR, ZMQ_MINOR, ZMQ_PATCH = _M.zmq_version()
-assert(
-  ((ZMQ_MAJOR == 3) and (ZMQ_MINOR >= 2)) or (ZMQ_MAJOR == 4),
-  "Unsupported ZMQ version: " .. ZMQ_MAJOR .. "." .. ZMQ_MINOR .. "." .. ZMQ_PATCH
-)
+_M.ZMQ_VERSION_MAJOR, _M.ZMQ_VERSION_MINOR, _M.ZMQ_VERSION_PATCH =
+  ZMQ_VERSION_MAJOR, ZMQ_VERSION_MINOR, ZMQ_VERSION_PATCH
 
 return _M

@@ -1,3 +1,18 @@
+local lua_version_t
+local function lua_version()
+  if not lua_version_t then 
+    local version = rawget(_G,"_VERSION")
+    local maj,min = version:match("^Lua (%d+)%.(%d+)$")
+    if maj then                         lua_version_t = {tonumber(maj),tonumber(min)}
+    elseif not math.mod then            lua_version_t = {5,2}
+    elseif table.pack and not pack then lua_version_t = {5,2}
+    else                                lua_version_t = {5,2} end
+  end
+  return lua_version_t[1], lua_version_t[2]
+end
+
+local LUA_MAJOR, LUA_MINOR = lua_version()
+local HAS_GC_TABLE = (LUA_MAJOR > 5) or ((LUA_MAJOR == 5) and (LUA_MINOR >= 2))
 
 local api = require "lzmq.ffi.api"
 local ffi = require "ffi"
@@ -18,8 +33,12 @@ local make_weak_kv do
 end
 
 local FLAGS = api.FLAGS
+local ERRORS = api.ERRORS
+local ZMQ_LINGER = api.SOCKET_OPTIONS.ZMQ_LINGER
 
 local ptrtoint = api.ptrtoint
+
+local unpack = unpack or table.unpack
 
 local zmq     = {}
 local Error   = {}
@@ -68,31 +87,80 @@ local function check_context(self)
 end
 
 function Context:new(ptr)
-  local ctx
+  local ctx, opt
   if ptr then
-    ctx = api.inttoptr(ptr)
-    assert(ptr == api.ptrtoint(ctx)) -- ensure correct convert
-  else
+    if(type(ptr) == 'table')then
+      opt,ptr = ptr
+    else
+      ctx = api.inttoptr(ptr)
+      assert(ptr == api.ptrtoint(ctx)) -- ensure correct convert
+    end
+  end
+  if not ctx then
     ctx = api.zmq_ctx_new()
     if not ctx then return nil, zerror() end
   end
-  local o = {
+
+  local o = setmetatable({
     _private = {
       owner   = not ptr;
       sockets = make_weak_kv();
       ctx     = ctx;
+      scount  = 0;
     }
-  }
-  return setmetatable(o, self)
+  }, self)
+
+  if not HAS_GC_TABLE then
+    ffi.gc(ctx, function() o:destroy() end)
+  end
+
+  if opt then
+    for k, v in pairs(opt) do
+      if type(k) == 'string' then
+        local fn = o['set_' .. k]
+        if fn then
+          local ok, err = fn(o, v)
+          if not ok then
+            o:destroy()
+            return nil, err
+          end
+        end
+      end
+    end
+  end
+
+  return o
+end
+
+if HAS_GC_TABLE then
+
+-- wothout __gc method on socket object this counter is not correct
+function Context:_inc_socket_count(n)
+  assert((n == 1) or (n == -1))
+  self._private.scount = self._private.scount + n
+  assert(self._private.scount >= 0)
+end
+
+else
+
+function Context:_inc_socket_count(n)
+  assert((n == 1) or (n == -1))
+end
+
+end
+
+function Context:_remove_socket(skt)
+  self._private.sockets[skt:handle()] = nil
+  self:_inc_socket_count(-1)
 end
 
 function Context:closed()
   return not self._private.ctx
 end
 
-local function Context_cleanup(self)
+local function Context_cleanup(self, linger)
   for _, skt in pairs(self._private.sockets) do
-    skt:close()
+    skt:close(linger)
   end
   -- lua can remove skt from sockets but do not call finalizer
   -- for skt._private.skt so we enforce gc
@@ -100,9 +168,13 @@ local function Context_cleanup(self)
   -- collectgarbage("collect")
 end
 
-function Context:destroy()
+function Context:destroy(linger)
   if self:closed() then return true end
-  Context_cleanup(self)
+  Context_cleanup(self, linger)
+
+  if self._private.on_close then
+    pcall(self._private.on_close)
+  end
 
   if self._private.owner then
     api.zmq_ctx_term(self._private.ctx)
@@ -111,11 +183,18 @@ function Context:destroy()
   return true
 end
 
+Context.__gc = Context.destroy
+
+function Context:on_close(fn)
+  self._private.on_close = fn
+  return true
+end
+
 if api.zmq_ctx_shutdown then
 
-function Context:shutdown()
+function Context:shutdown(linger)
   check_context(self)
-  Context_cleanup(self)
+  Context_cleanup(self, linger)
 
   if self._private.owner then
     api.zmq_ctx_shutdown(self._private.ctx)
@@ -167,16 +246,59 @@ for optname, optid in pairs(api.CONTEXT_OPTIONS) do
   end
 end
 
-function Context:socket(stype)
+function Context:socket(stype, opt)
   check_context(self)
+  if type(stype) == "table" then
+    stype, opt = stype[1], stype
+  end
   local skt = api.zmq_socket(self._private.ctx, stype)
   if not skt then return nil, zerror() end
-  return setmetatable({
+  local o = setmetatable({
     _private = {
       ctx = self;
       skt = skt;
     }
   },Socket)
+  self:_inc_socket_count(1)
+
+  -- if not HAS_GC_TABLE then
+  --   ffi.gc(skt, function() o:close() end)
+  -- end
+
+  if opt then
+    for k, v in pairs(opt) do
+      if type(k) == 'string' then
+        local fn = o['set_' .. k]
+        if fn then
+          local ok, err, ext = fn(o, v)
+          if not ok then
+            o:destroy()
+            return nil, err, ext
+          end
+        end
+      end
+    end
+
+    if opt.bind then
+      local ok, err, ext = o:bind(opt.bind)
+      if not ok then
+        o:close()
+        return ok, err, ext
+      end
+    end
+
+    if opt.connect then
+      local ok, err, ext = o:connect(opt.connect)
+      if not ok then
+        o:close()
+        return ok, err, ext
+      end
+    end
+
+  end
+
+  self:autoclose(o)
+  return o
 end
 
 function Context:autoclose(skt)
@@ -188,6 +310,23 @@ function Context:autoclose(skt)
   return true
 end
 
+-- wothout __gc method on socket object we can not support counter.
+if HAS_GC_TABLE then
+  function Context:socket_count()
+    check_context(self)
+    return self._private.scount
+  end
+else
+  function Context:socket_count()
+    check_context(self)
+    local cnt = 0
+    for _ in pairs(self._private.sockets) do
+      cnt = cnt + 1;
+    end
+    return cnt
+  end
+end
+
 end
 
 do -- Socket
@@ -197,19 +336,25 @@ function Socket:closed()
   return not self._private.skt
 end
 
-function Socket:close()
+function Socket:close(linger)
   if self:closed() then return true end
 
   if self._private.on_close then
     pcall(self._private.on_close)
   end
 
-  self._private.ctx._private.sockets[ self._private.skt ] = nil
+  self._private.ctx:_remove_socket(self)
+
+  if linger then
+    api.zmq_skt_setopt_int(self._private.skt, ZMQ_LINGER, linger)
+  end
 
   api.zmq_close(self._private.skt)
   self._private.skt = nil
   return true
 end
+
+Socket.__gc = Socket.close
 
 function Socket:handle()
   return self._private.skt
@@ -259,15 +404,33 @@ function Socket:recv(flags)
   return data, more ~= 0
 end
 
-function Socket:send_all(msg)
-  for i = 1, #msg - 1 do
-    local str = msg[i]
+function Socket:send_all(msg, flags, i, n)
+  flags = flags or 0
+  i = i or 1
+  n = n or #msg
+  assert(n >= i, "invalid range")
+
+  if(flags ~= 0) and (flags ~= FLAGS.ZMQ_SNDMORE) then
+    return nil, zerror(ERRORS.ENOTSUP)
+  end
+  for i = i, n - 1 do
+    local str = assert(msg[i])
     local ok, err = self:send(str, FLAGS.ZMQ_SNDMORE)
     if not ok then return nil, err, i end
   end
-  local ok, err = self:send(msg[#msg])
-  if not ok then return nil, err, #msg end
+  local ok, err = self:send(msg[n], flags)
+  if not ok then return nil, err, n end
   return true
+end
+
+Socket.send_multipart = Socket.send_all
+
+function Socket:sendx(...)
+  return self:send_all({...}, 0, 1, select("#", ...))
+end
+
+function Socket:sendx_more(...)
+  return self:send_all({...}, FLAGS.ZMQ_SNDMORE, 1, select("#", ...))
 end
 
 function Socket:send_more(msg, flags)
@@ -288,6 +451,17 @@ function Socket:recv_all(flags)
     if not more then break end
   end
   return res
+end
+
+Socket.recv_multipart = Socket.recv_all
+
+function Socket:recvx(flags)
+  local ok, err, t = self:recv_all(flags)
+  if not ok then
+    if t then return nil, err, unpack(t) end
+    return nil, err
+  end
+  return unpack(ok)
 end
 
 function Socket:recv_len(len, flags)
@@ -313,6 +487,13 @@ function Socket:recv_new_msg(flags)
     return nil, err
   end
   return msg, err
+end
+
+if api.zmq_recv_event then
+function Socket:recv_event(flags)
+  assert(not self:closed())
+  return api.zmq_recv_event(self._private.skt)
+end
 end
 
 local function gen_getopt(getopt)
@@ -382,6 +563,27 @@ function Socket:on_close(fn)
   assert(not self:closed())
   self._private.on_close = fn
   return true
+end
+
+function Socket:context()
+  return self._private.ctx
+end
+
+function Socket:monitor(addr, events)
+  if type(addr) == 'number' then
+    events, addr = addr
+  end
+
+  if not addr then
+    addr = "inproc://lzmq.monitor." .. api.ptrtoint(self._private.skt)
+  end
+
+  events = events or api.EVENTS.ZMQ_EVENT_ALL
+
+  local ret = api.zmq_socket_monitor(self._private.skt, addr, events)
+  if -1 == ret then return nil, zerror() end
+
+  return addr  
 end
 
 end
@@ -592,6 +794,13 @@ function Poller:ensure(n)
   return true
 end
 
+local function skt2number(skt)
+  if type(skt) == "number" then
+    return skt
+  end
+  return ptrtoint(skt:handle())
+end
+
 function Poller:add(skt, events, cb)
   assert(type(events) == 'number')
   assert(cb)
@@ -605,7 +814,7 @@ function Poller:add(skt, events, cb)
   else
     self._private.items[n].socket = skt:handle()
     self._private.items[n].fd     = 0
-    h = api.ptrtoint(skt:handle())
+    h = ptrtoint(skt:handle())
   end
   self._private.items[n].events  = events
   self._private.items[n].revents = 0
@@ -616,16 +825,21 @@ end
 
 function Poller:remove(skt)
   local items, nitems, sockets = self._private.items, self._private.nitems, self._private.sockets
-  local params = sockets[ptrtoint(skt:handle())]
+  local h = skt2number(skt)
+  local params = sockets[h]
   if not params  then return true end
+
+  sockets[h] = nil
+
   if nitems == 0 then return true end
   local skt_no =  params[3]
   assert(skt_no < nitems)
   
-  self._private.nitems = nitems - 1
-  nitems = self._private.nitems
+  nitems = nitems - 1
+  self._private.nitems = nitems
 
-  if nitems == 0 then return true end
+  -- if we remove last socket
+  if skt_no == nitems then return true end
 
   local last_item  = items[ nitems ]
   local last_param = sockets[ ptrtoint(last_item.socket) ]
@@ -697,17 +911,24 @@ end
 
 do -- zmq
 
-function zmq.version()
+zmq._VERSION = "0.3.0"
+
+function zmq.version(unpack)
   local mj,mn,pt = api.zmq_version()
-  if mj then return {mj,mn,pt} end
+  if mj then
+    if unpack then return mj,mn,pt end
+    return {mj,mn,pt}
+  end
   return nil, zerror()
 end
 
-function zmq.context()
-  return Context:new()
+function zmq.context(opt)
+  return Context:new(opt)
 end
 
-zmq.init = zmq.context
+ function zmq.init(n)
+  return zmq.context{io_threads = n}
+end  
 
 function zmq.init_ctx(ctx)
   return Context:new(ctx)
@@ -746,6 +967,7 @@ for name, value in pairs(api.SOCKET_OPTIONS)     do zmq[ name:sub(5) ] = value[1
 for name, value in pairs(api.FLAGS)              do zmq[ name:sub(5) ] = value end
 for name, value in pairs(api.DEVICE)             do zmq[ name:sub(5) ] = value end
 for name, value in pairs(api.SECURITY_MECHANISM) do zmq[ name:sub(5) ] = value end
+for name, value in pairs(api.EVENTS)             do zmq[ name:sub(5) ] = value end
 
 zmq.errors = {}
 for name, value in pairs(api.ERRORS) do 
@@ -768,6 +990,20 @@ function zmq.proxy(frontend, backend, capture)
   local ret = api.zmq_proxy(frontend:handle(), backend:handle(), capture:handle())
   if ret == -1 then return nil, zerror() end
   return true
+end
+
+zmq.z85_encode = api.zmq_z85_encode
+
+zmq.z85_decode = api.zmq_z85_decode
+
+if api.zmq_curve_keypair then
+
+function zmq.curve_keypair(...)
+  local pub, sec = api.zmq_curve_keypair(...)
+  if pub == -1 then return nil, zerror() end
+  return pub, sec
+end
+
 end
 
 end

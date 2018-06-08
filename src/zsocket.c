@@ -2,7 +2,9 @@
 #include "zmsg.h"
 #include "lzutils.h"
 #include "lzmq.h"
+#include "zerror.h"
 #include <stdint.h>
+#include <assert.h>
 
 #define DEFINE_SKT_METHOD_1(NAME)              \
                                                \
@@ -117,6 +119,7 @@ static int luazmq_skt_recv_len (lua_State *L) {
     LUAZMQ_FREE_TEMP(tmp, buffer);
     return luazmq_fail(L, skt);
   }
+  assert(ret >= 0);
 
   lua_pushlstring(L, buffer, (ret < len)?ret:len);
   LUAZMQ_FREE_TEMP(tmp, buffer);
@@ -157,6 +160,73 @@ static int luazmq_skt_recv_msg (lua_State *L) {
   return 2;
 }
 
+static int luazmq_skt_recv_event (lua_State *L) {
+  zsocket *skt  = luazmq_getsocket(L);
+  zmq_event_t event;
+  int rc, flags = luaL_optint(L, 2, 0);
+
+#if ZMQ_VERSION_MAJOR == 3
+
+  zmq_msg_t msg;
+  zmq_msg_init (&msg);
+
+  rc = zmq_msg_recv (&msg, skt->skt, flags);
+  if(rc == -1){
+    zmq_msg_close(&msg);
+    return luazmq_fail(L, skt);
+  }
+
+  memcpy (&event, zmq_msg_data (&msg), sizeof (event));
+
+  lua_pushnumber(L, event.event);
+  lua_pushnumber(L, event.data.connected.fd);
+  if(event.data.connected.addr){
+    lua_pushstring(L, event.data.connected.addr);
+    zmq_msg_close(&msg);
+    return 3;
+  }
+  zmq_msg_close(&msg);
+  return 2;
+
+#else // 4.0+
+
+  zmq_msg_t msg1, msg2;  // binary and address parts
+
+  zmq_msg_init (&msg1); zmq_msg_init (&msg2);
+
+  rc = zmq_msg_recv (&msg1, skt->skt, flags);
+  if(rc == -1){
+    zmq_msg_close(&msg1);
+    zmq_msg_close(&msg2);
+    return luazmq_fail(L, skt);
+  }
+
+  assert (zmq_msg_more(&msg1) != 0);
+
+  rc = zmq_msg_recv (&msg2, skt->skt, flags);
+  if(rc == -1){
+    zmq_msg_close(&msg1);
+    zmq_msg_close(&msg2);
+    return luazmq_fail(L, skt);
+  }
+
+  assert (zmq_msg_more(&msg2) == 0);
+
+  { // copy binary data to event struct
+    const char* data = (char*)zmq_msg_data(&msg1);
+    memcpy(&(event.event), data, sizeof(event.event));
+    memcpy(&(event.value), data + sizeof(event.event), sizeof(event.value));
+    zmq_msg_close(&msg1);
+  }
+
+  lua_pushnumber(L, event.event);
+  lua_pushnumber(L, event.value);
+  lua_pushlstring(L, zmq_msg_data(&msg2), zmq_msg_size(&msg2));
+  zmq_msg_close(&msg2);
+  return 3;
+#endif
+}
+
 static int luazmq_skt_recv_new_msg (lua_State *L){
   if(lua_isuserdata(L,2)) return luazmq_skt_recv_msg(L);
   luaL_optint(L, 2, 0);
@@ -182,14 +252,28 @@ static int luazmq_skt_more (lua_State *L) {
 
 static int luazmq_skt_send_all (lua_State *L) {
   zsocket *skt = luazmq_getsocket(L);
-  size_t i = luaL_optint(L,3,1);
-  size_t n = lua_objlen(L, 2);
+  int flags = luaL_optint(L,3,0);
+  int n, i = luaL_optint(L,4,1);
+  if(lua_isnoneornil(L, 5)){
+    n = lua_objlen(L, 2);
+  }
+  else{
+    n = luaL_checkint(L, 5);
+    luaL_argcheck(L, n >= i, 5, "invalid range");
+  }
+
+  if(flags & (~ZMQ_SNDMORE)){
+    lua_pushnil(L);
+    luazmq_error_create(L, ENOTSUP);
+    return 2;
+  }
+  
   for(;i <= n; ++i){
     zmq_msg_t msg;
     const char *data;size_t len;
     int ret;
     lua_rawgeti(L, 2, i);
-    data = lua_tolstring(L,-1, &len);
+    data = luaL_checklstring(L, -1, &len);
     ret = zmq_msg_init_size(&msg, len);
     if(-1 == ret){
       ret = luazmq_fail(L, skt);
@@ -197,7 +281,7 @@ static int luazmq_skt_send_all (lua_State *L) {
       return ret + 1;
     }
     memcpy(zmq_msg_data(&msg), data, len);
-    ret = zmq_msg_send(&msg, skt->skt, (i == n)?0:ZMQ_SNDMORE);
+    ret = zmq_msg_send(&msg, skt->skt, (i == n)?flags:ZMQ_SNDMORE);
     zmq_msg_close(&msg);
     if(-1 == ret){
       ret = luazmq_fail(L, skt);
@@ -206,6 +290,38 @@ static int luazmq_skt_send_all (lua_State *L) {
     }
   }
   return luazmq_pass(L);
+}
+
+static int luazmq_skt_sendx_impl(lua_State *L, int last_flag) {
+  zsocket *skt = luazmq_getsocket(L);
+  size_t i, n = lua_gettop(L);
+  for(i = 2; i<=n; ++i){
+    zmq_msg_t msg;
+    size_t len; const char *data = luaL_checklstring(L, i, &len);
+    int ret = zmq_msg_init_size(&msg, len);
+    if(-1 == ret){
+      ret = luazmq_fail(L, skt);
+      lua_pushinteger(L, i);
+      return ret + 1;
+    }
+    memcpy(zmq_msg_data(&msg), data, len);
+    ret = zmq_msg_send(&msg, skt->skt, (i == n)?last_flag:ZMQ_SNDMORE);
+    zmq_msg_close(&msg);
+    if(-1 == ret){
+      ret = luazmq_fail(L, skt);
+      lua_pushinteger(L, i);
+      return ret + 1;
+    }
+  }
+  return luazmq_pass(L);
+}
+
+static int luazmq_skt_sendx(lua_State *L){
+  return luazmq_skt_sendx_impl(L, 0);
+}
+
+static int luazmq_skt_sendx_more(lua_State *L){
+  return luazmq_skt_sendx_impl(L, ZMQ_SNDMORE);
 }
 
 static int luazmq_skt_recv_all (lua_State *L) {
@@ -240,13 +356,92 @@ static int luazmq_skt_recv_all (lua_State *L) {
   return 1;
 }
 
+static int luazmq_skt_recvx (lua_State *L) {
+  zsocket *skt = luazmq_getsocket(L);
+  zmq_msg_t msg;
+  int flags = luaL_optint(L,2,0);
+  int i = 0;
+  lua_settop(L, 1);
+
+  while(1){
+    int ret = zmq_msg_init(&msg);
+    if(-1 == ret){
+      ret = luazmq_fail(L, skt);
+      {int j;for(j = ret; j >= 0; --j){
+        lua_insert(L, 1);
+      }}
+      return ret + i;
+    }
+
+    ret = zmq_msg_recv(&msg, skt->skt, flags);
+    if(-1 == ret){
+      zmq_msg_close(&msg);
+      ret = luazmq_fail(L, skt);
+      {int j;for(j = ret; j >= 0; --j){
+        lua_insert(L, 1);
+      }}
+      return ret + i;
+    }
+
+    i++;
+    lua_checkstack(L, i);
+    lua_pushlstring(L, zmq_msg_data(&msg), zmq_msg_size(&msg));
+    ret = zmq_msg_more(&msg);
+    zmq_msg_close(&msg);
+    if(!ret) break;
+  }
+  return i;
+}
+
+static int luazmq_skt_monitor (lua_State *L) {
+  zsocket *skt = luazmq_getsocket(L);
+  char endpoint[128];
+  const char *bind;
+  int ret, events;
+
+  
+  if( 
+    (lua_gettop(L) == 1) ||         /* s:monitor()          */
+    (lua_type(L, 2) == LUA_TNUMBER) /* s:monitor(EVENT_ALL) */
+  ){
+#ifdef _MSC_VER
+    sprintf_s(endpoint, sizeof(endpoint), "inproc://lzmq.monitor.%p", skt->skt);
+#else
+    sprintf(endpoint, "inproc://lzmq.monitor.%p", skt->skt);
+#endif
+    bind = endpoint;
+    events = luaL_optint(L, 2, ZMQ_EVENT_ALL);
+  }
+  else{
+    bind = luaL_checkstring(L, 2);
+    events = luaL_optint(L, 3, ZMQ_EVENT_ALL);
+  }
+
+  ret = zmq_socket_monitor (skt->skt, bind, events);
+  if(-1 == ret){
+    return luazmq_fail(L, skt);
+  }
+
+  lua_pushstring(L, bind);
+  return 1;
+}
+
+static int luazmq_skt_context (lua_State *L) {
+  zsocket *skt = luazmq_getsocket(L);
+  lua_rawgeti(L, LUAZMQ_LUA_REGISTRY, skt->ctx_ref);
+  return 1;
+}
+
 int luazmq_skt_before_close (lua_State *L, zsocket *skt) {
+  luaL_unref(L, LUAZMQ_LUA_REGISTRY, skt->ctx_ref);
+  skt->ctx_ref = LUA_NOREF;
+
   if(LUA_NOREF == skt->onclose_ref) return 0;
-  lua_rawgeti(L, LUA_REGISTRYINDEX, skt->onclose_ref);
+  lua_rawgeti(L, LUAZMQ_LUA_REGISTRY, skt->onclose_ref);
 
   lua_pcall(L, 0, 0, 0);
 
-  luaL_unref(L, LUA_REGISTRYINDEX, skt->onclose_ref);
+  luaL_unref(L, LUAZMQ_LUA_REGISTRY, skt->onclose_ref);
   skt->onclose_ref = LUA_NOREF;
   return 0;
 }
@@ -256,12 +451,12 @@ static int luazmq_skt_on_close (lua_State *L) {
   lua_settop(L, 2);
   if(LUA_NOREF != skt->onclose_ref){
     if(lua_isnil(L, 2)){
-      luaL_unref(L, LUA_REGISTRYINDEX, skt->onclose_ref);
+      luaL_unref(L, LUAZMQ_LUA_REGISTRY, skt->onclose_ref);
       skt->onclose_ref = LUA_NOREF;
       return 0;
     }
   }
-  skt->onclose_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+  skt->onclose_ref = luaL_ref(L, LUAZMQ_LUA_REGISTRY);
   return 0;
 }
 
@@ -271,12 +466,21 @@ static int luazmq_skt_destroy (lua_State *L) {
   if(!(skt->flags & LUAZMQ_FLAG_CLOSED)){
     int ret;
     luazmq_skt_before_close(L, skt);
+    if(!(skt->flags & LUAZMQ_FLAG_DONT_DESTROY)){
+      if(lua_isnumber(L, 2)){
+        int linger = luaL_optint(L, 2, 0);
+        zmq_setsockopt(skt->skt, ZMQ_LINGER, &linger, sizeof(linger));
+      }
+      ret = zmq_close(skt->skt);
+      assert(ret != -1);
+      // if(ret == -1)return luazmq_fail(L, skt);
+    }
 
-    ret = zmq_close(skt->skt);
-    if(ret == -1)return luazmq_fail(L, skt);
-
-#ifdef LZMQ_DEBUG
-    skt->ctx->socket_count--;
+#if LZMQ_SOCKET_COUNT
+    if(skt->ctx){
+      skt->ctx->socket_count--;
+      assert(skt->ctx->socket_count >= 0);
+    }
 #endif
 
     skt->flags |= LUAZMQ_FLAG_CLOSED;
@@ -568,34 +772,42 @@ static int luazmq_skt_setopt_u64(lua_State *L){ return luazmq_skt_set_u64(L, lua
 static int luazmq_skt_setopt_str(lua_State *L){ return luazmq_skt_set_str(L, luaL_checkint(L,2)); }
 
 static const struct luaL_Reg luazmq_skt_methods[] = {
-  {"bind",         luazmq_skt_bind         },
-  {"unbind",       luazmq_skt_unbind       },
-  {"connect",      luazmq_skt_connect      },
-  {"disconnect",   luazmq_skt_disconnect   },
-  {"send",         luazmq_skt_send         },
-  {"send_msg",     luazmq_skt_send_msg     },
-  {"send_more",    luazmq_skt_send_more    },
-  {"recv",         luazmq_skt_recv         },
-  {"recv_msg",     luazmq_skt_recv_msg     },
-  {"recv_new_msg", luazmq_skt_recv_new_msg },
-  {"recv_len",     luazmq_skt_recv_len     },
-  {"send_all",     luazmq_skt_send_all     },
-  {"recv_all",     luazmq_skt_recv_all     },
-  {"more",         luazmq_skt_more         },
+  {"bind",           luazmq_skt_bind         },
+  {"unbind",         luazmq_skt_unbind       },
+  {"connect",        luazmq_skt_connect      },
+  {"disconnect",     luazmq_skt_disconnect   },
+  {"send",           luazmq_skt_send         },
+  {"send_msg",       luazmq_skt_send_msg     },
+  {"sendx",          luazmq_skt_sendx        },
+  {"sendx_more",     luazmq_skt_sendx_more   },
+  {"send_more",      luazmq_skt_send_more    },
+  {"recv",           luazmq_skt_recv         },
+  {"recvx",          luazmq_skt_recvx        },
+  {"recv_msg",       luazmq_skt_recv_msg     },
+  {"recv_new_msg",   luazmq_skt_recv_new_msg },
+  {"recv_len",       luazmq_skt_recv_len     },
+  {"recv_event",     luazmq_skt_recv_event   },
+  {"send_all",       luazmq_skt_send_all     },
+  {"recv_all",       luazmq_skt_recv_all     },
+  {"send_multipart", luazmq_skt_send_all     },
+  {"recv_multipart", luazmq_skt_recv_all     },
+  {"more",           luazmq_skt_more         },
+  {"monitor",        luazmq_skt_monitor      },
+  {"context",        luazmq_skt_context      },
 
-  {"getopt_int",   luazmq_skt_getopt_int   },
-  {"getopt_i64",   luazmq_skt_getopt_i64   },
-  {"getopt_u64",   luazmq_skt_getopt_u64   },
-  {"getopt_str",   luazmq_skt_getopt_str   },
-  {"setopt_int",   luazmq_skt_setopt_int   },
-  {"setopt_i64",   luazmq_skt_setopt_i64   },
-  {"setopt_u64",   luazmq_skt_setopt_u64   },
-  {"setopt_str",   luazmq_skt_setopt_str   },
+  {"getopt_int",     luazmq_skt_getopt_int   },
+  {"getopt_i64",     luazmq_skt_getopt_i64   },
+  {"getopt_u64",     luazmq_skt_getopt_u64   },
+  {"getopt_str",     luazmq_skt_getopt_str   },
+  {"setopt_int",     luazmq_skt_setopt_int   },
+  {"setopt_i64",     luazmq_skt_setopt_i64   },
+  {"setopt_u64",     luazmq_skt_setopt_u64   },
+  {"setopt_str",     luazmq_skt_setopt_str   },
 
-  {"on_close",   luazmq_skt_on_close       },
-  {"__gc",       luazmq_skt_destroy        },
-  {"close",      luazmq_skt_destroy        },
-  {"closed",     luazmq_skt_closed         },
+  {"on_close",       luazmq_skt_on_close     },
+  {"__gc",           luazmq_skt_destroy      },
+  {"close",          luazmq_skt_destroy      },
+  {"closed",         luazmq_skt_closed       },
   
   //{ options
 #if defined(ZMQ_AFFINITY)
@@ -954,9 +1166,18 @@ static const luazmq_int_const skt_security_mechanism[] ={
   {NULL, 0}
 };
 
-void luazmq_socket_initlib (lua_State *L){
-  luazmq_createmeta(L, LUAZMQ_SOCKET, luazmq_skt_methods);
+void luazmq_socket_initlib (lua_State *L, int nup){
+#ifdef LUAZMQ_DEBUG
+  int top = lua_gettop(L);
+#endif
+
+  luazmq_createmeta(L, LUAZMQ_SOCKET, luazmq_skt_methods, nup);
   lua_pop(L, 1);
+
+#ifdef LUAZMQ_DEBUG
+  assert(top == (lua_gettop(L) + nup));
+#endif
+
   luazmq_register_consts(L, skt_types);
   luazmq_register_consts(L, skt_options);
   luazmq_register_consts(L, skt_flags);
