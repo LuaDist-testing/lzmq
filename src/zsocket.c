@@ -5,6 +5,8 @@
 #include "zerror.h"
 #include <stdint.h>
 #include <assert.h>
+#include <memory.h>
+#include <stdlib.h>
 
 #define DEFINE_SKT_METHOD_1(NAME)              \
                                                \
@@ -393,6 +395,21 @@ static int luazmq_skt_recvx (lua_State *L) {
   return i;
 }
 
+static int luazmq_skt_poll (lua_State *L) {
+  zsocket *skt = luazmq_getsocket(L);
+  int timeout  = luaL_optint(L, 2, -1);
+  int mask     = luaL_optint(L, 3, ZMQ_POLLIN);
+  zmq_pollitem_t items [] = { { skt->skt, 0, mask, 0 } };
+
+  if(-1 == zmq_poll (items, 1, timeout)){
+    return luazmq_fail(L, skt);
+  }
+
+  lua_pushboolean(L, (items[0].revents & mask)?1:0);
+  lua_pushinteger(L, items[0].revents);
+  return 2;
+}
+
 static int luazmq_skt_monitor (lua_State *L) {
   zsocket *skt = luazmq_getsocket(L);
   char endpoint[128];
@@ -429,6 +446,38 @@ static int luazmq_skt_monitor (lua_State *L) {
 static int luazmq_skt_context (lua_State *L) {
   zsocket *skt = luazmq_getsocket(L);
   lua_rawgeti(L, LUAZMQ_LUA_REGISTRY, skt->ctx_ref);
+  return 1;
+}
+
+static int luazmq_skt_handle (lua_State *L) {
+  zsocket *skt = luazmq_getsocket(L);
+  lua_pushlightuserdata(L, skt->skt);
+  return 1;
+}
+
+static int luazmq_skt_reset_handle(lua_State *L) {
+  zsocket *skt = luazmq_getsocket(L);
+  void *src = lua_touserdata(L, 2);
+  int own   =  lua_isnoneornil(L, 3) ? 
+    ((skt->flags & LUAZMQ_FLAG_DONT_DESTROY)?0:1) :
+    lua_toboolean(L, 3);
+  int close = lua_toboolean(L, 4);
+  void *h   = skt->skt;
+
+  luaL_argcheck(L, lua_islightuserdata(L, 2), 2, "lightuserdata expected");
+
+  skt->skt = src;
+  if(own) skt->flags &= ~LUAZMQ_FLAG_DONT_DESTROY;
+  else    skt->flags |=  LUAZMQ_FLAG_DONT_DESTROY;
+
+  if(close){
+    zmq_close(h);
+    lua_pushboolean(L, 1);
+  }
+  else{
+    lua_pushlightuserdata(L, h);
+  }
+
   return 1;
 }
 
@@ -776,6 +825,7 @@ static const struct luaL_Reg luazmq_skt_methods[] = {
   {"unbind",         luazmq_skt_unbind       },
   {"connect",        luazmq_skt_connect      },
   {"disconnect",     luazmq_skt_disconnect   },
+  {"poll",           luazmq_skt_poll         },
   {"send",           luazmq_skt_send         },
   {"send_msg",       luazmq_skt_send_msg     },
   {"sendx",          luazmq_skt_sendx        },
@@ -793,6 +843,9 @@ static const struct luaL_Reg luazmq_skt_methods[] = {
   {"recv_multipart", luazmq_skt_recv_all     },
   {"more",           luazmq_skt_more         },
   {"monitor",        luazmq_skt_monitor      },
+  {"handle",         luazmq_skt_handle       },
+  {"reset_handle",   luazmq_skt_reset_handle },
+  {"lightuserdata",  luazmq_skt_handle       },
   {"context",        luazmq_skt_context      },
 
   {"getopt_int",     luazmq_skt_getopt_int   },

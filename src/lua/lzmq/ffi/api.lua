@@ -30,16 +30,22 @@ end
 
 local bit     = orequire("bit32", "bit")
 
-local zlibs ={
-  "zmq",
-  "libzmq",
-  "zmq4",
-  "libzmq4",
-  "libzmq.so.4",
-  "zmq3",
-  "libzmq3",
-  "libzmq.so.3",
-}
+local zlibs if IS_WINDOWS then
+  zlibs = {
+    "zmq",  "libzmq",
+    "zmq4", "libzmq4",
+    "zmq3", "libzmq3",
+  }
+else
+  zlibs = {
+    "zmq",      "libzmq",
+    "zmq.so.4", "libzmq.so.4",
+    "zmq.so.3", "libzmq.so.3",
+    "/usr/local/lib/libzmq.so",
+    "/usr/local/lib/libzmq.so.4",
+    "/usr/local/lib/libzmq.so.3",
+  }
+end
 
 local ok, libzmq3 = pcall( oload, zlibs )
 if not ok then
@@ -137,6 +143,7 @@ local pollitem_size   = ffi.sizeof(zmq_pollitem_t)
 local NULL            = ffi.cast(pvoid_t, 0)
 local int16_size      = ffi.sizeof("int16_t")
 local int32_size      = ffi.sizeof("int32_t")
+local ptr_size        = ffi.sizeof(pvoid_t)
 
 local function ptrtoint(ptr)
   return tonumber(ffi.cast(uintptr_t, ptr))
@@ -145,6 +152,31 @@ end
 local function inttoptr(val)
   return ffi.cast(pvoid_t, ffi.cast(uintptr_t, val))
 end
+
+local ptrtostr, strtoptr do
+local void_array = ffi.new("void*[1]")
+local char_ptr   = ffi.cast(pchar_t, void_array)
+
+ptrtostr = function (ptr)
+  void_array[0] = ptr
+  return ffi.string(char_ptr, ptr_size)
+end
+
+strtoptr = function (str)
+  if type(str) == 'string' then
+    assert(#str == ptr_size)
+    ffi.copy(char_ptr, str, ptr_size)
+    return void_array[0]
+  end
+
+  -- we can support also lightuserdata
+  assert(type(str) == 'userdata')
+  return ffi.cast(pvoid_t, str)
+end
+
+end
+
+local serialize_ptr, deserialize_ptr = ptrtostr, strtoptr
 
 local function pget(lib, elem)
   local ok, err = pcall(function()
@@ -740,9 +772,14 @@ end
 
 end
 
-_M.ptrtoint = ptrtoint
+_M.inttoptr        = inttoptr
+_M.ptrtoint        = ptrtoint
 
-_M.inttoptr = inttoptr
+_M.strtoptr        = strtoptr
+_M.ptrtostr        = ptrtostr
+
+_M.serialize_ptr   = serialize_ptr
+_M.deserialize_ptr = deserialize_ptr
 
 _M.vla_pollitem_t = vla_pollitem_t
 _M.zmq_pollitem_t = zmq_pollitem_t

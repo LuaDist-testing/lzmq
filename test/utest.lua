@@ -56,7 +56,7 @@ local is_zsocket     = is_object
 local is_zcontext    = is_object
 local is_zcontext_ud = function(o, ...)
   if o == nil then return o, ... end
-  local flag = (type(o) == 'number') or (type(o) == 'userdata')
+  local flag = (type(o) == 'number') or (type(o) == 'userdata') or (type(o) == 'string')
   if not flag then return nil, '`' .. tostring(o) .. '` is not zma.context.userdata' end
   return o, ...
 end
@@ -213,6 +213,7 @@ function test_interface()
   -- assert_function(zmq.poller)
   assert_function(zmq.init)
   assert_function(zmq.init_ctx)
+  assert_function(zmq.init_socket)
   assert_function(zmq.msg_init)
   assert_function(zmq.msg_init_size)
   assert_function(zmq.msg_init_data)
@@ -284,6 +285,7 @@ function test_socket()
   assert_function(skt.on_close)
   assert_function(skt.close)
   assert_function(skt.closed)
+  assert_function(skt.lightuserdata)
 
   assert_function(skt.getopt_int)
   assert_function(skt.getopt_i64)
@@ -1088,6 +1090,36 @@ end
 
 end
 
+local _ENV = TEST_CASE'socket poll'          if true then
+
+local ctx, req, rep, timer
+
+function setup()
+  ctx   = assert(zmq.context())
+  rep   = assert(ctx:socket{zmq.REP, bind = ECHO_ADDR, rcvtimeo = 100})
+  req   = assert(ctx:socket{zmq.REQ, connect = ECHO_ADDR})
+  timer = ztimer.monotonic()
+end
+
+function teardown()
+  if ctx then ctx:destroy() end
+  timer:close()
+end
+
+function test_timeout()
+  timer:start()
+  assert_false(rep:poll(2000))
+  assert_true(ge(1900, timer:stop()))
+end
+
+function test_recv()
+  req:send("HELLO")
+  assert_true(rep:poll(2000))
+  assert_equal("HELLO", rep:recv())
+end
+
+end
+
 local _ENV = TEST_CASE'loop'                 if true then
 
 local loop, timer
@@ -1099,6 +1131,7 @@ end
 
 function teardown()
   loop:destroy()
+  timer:close()
   wait(500) -- for TCP time to release IP address
 end
 
@@ -1629,6 +1662,60 @@ function test_monitor_without_addr_with_event()
   assert_match("^inproc://lzmq%.monitor%.[0-9a-fA-FxX]+$", srv:monitor(1))
 end
 
+
+end
+
+local _ENV = TEST_CASE'Clone socket'         if true then
+
+local ctx, rep, s1, s2
+
+function setup()
+  ctx = assert(is_zcontext(zmq.context()))
+  rep = assert(is_zsocket(ctx:socket{zmq.REP, bind    = ECHO_ADDR}))
+  s1  = assert(is_zsocket(ctx:socket{zmq.REQ, connect = ECHO_ADDR}))
+  wait()
+end
+
+function teardown()
+  if ctx then ctx:destroy() end
+end
+
+function test_lightuserdata()
+  local h = assert(s1:lightuserdata())
+end
+
+function test_wrap_socket()
+  local h = assert(s1:lightuserdata())
+  s2 =  assert(is_zsocket(zmq.init_socket(h)))
+  assert_nil(s2:context())
+  assert_equal(socket_count(ctx, 2))
+end
+
+function test_send_recv()
+  local h = assert(s1:lightuserdata())
+  s2 =  assert(is_zsocket(zmq.init_socket(h)))
+  assert_true(s1:send("hello"))
+  assert_equal("hello", rep:recv())
+  assert_true(rep:send("world"))
+  assert_equal("world", s2:recv())
+end
+
+function test_swap()
+  local h1 = assert(s1:lightuserdata())
+  local h2 = assert(rep:reset_handle(h1))
+  assert_equal(h1, s1:reset_handle(h2))
+
+  assert_true(rep:send("hello"))
+  assert_equal("hello", s1:recv())
+  assert_true(s1:send("world"))
+  assert_equal("world", rep:recv())
+end
+
+function test_reset_handle()
+  local h1 = assert(s1:lightuserdata())
+  assert_error(function() rep:reset_handle() end)
+  assert_true(rep:reset_handle(h1, false, true)) -- close handle
+end
 
 end
 

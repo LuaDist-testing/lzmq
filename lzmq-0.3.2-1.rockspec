@@ -1,17 +1,17 @@
 -- This file was automatically generated for the LuaDist project.
 
 package = "lzmq"
-version = "0.3.1-1"
+version = "0.3.2-1"
 
 -- LuaDist source
 source = {
-  tag = "0.3.1-1",
+  tag = "0.3.2-1",
   url = "git://github.com/LuaDist-testing/lzmq.git"
 }
 -- Original source
 -- source = {
---   url = "https://github.com/moteus/lzmq/archive/v0.3.1.zip",
---   dir = "lzmq-0.3.1",
+--   url = "https://github.com/moteus/lzmq/archive/v0.3.2.zip",
+--   dir = "lzmq-0.3.2",
 -- }
 
 description = {

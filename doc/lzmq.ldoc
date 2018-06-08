@@ -43,9 +43,13 @@ function version() end
 -- @usage ctx = zmq.context{io_threads = 1, max_sockets = 255}
 function context() end
 
---- Create a zmq Context based on lightuserdata.
+--- Create a zmq Context based on Lua representation of zmq context pointer.
 -- For this context @{\context.destroy} does not call `zmq_ctx_term`.
 function init_ctx() end
+
+--- Create a zmq Socket based on Lua representation of zmq socket pointer.
+-- For this socket @{\socket.destroy} does not call `zmq_close`.
+function init_socket() end
 
 --- Create ZMQ device
 --
@@ -93,6 +97,35 @@ function msg_init_size() end
 -- @tparam string source
 -- @treturn message
 function msg_init_data() end
+
+--- Start built-in ZMQ proxy.
+--
+-- @tparam socket frontend
+-- @tparam socket backend
+-- @tparam[opt] socket capture
+-- @treturn nil
+-- @treturn error
+function proxy()         end
+
+--- Encode a binary data as Z85 printable text.
+--
+-- @tparam string src
+-- @treturn string
+function z85_encode()    end
+
+--- Decode a binary data from Z85 printable text.
+--
+-- @tparam string src
+-- @treturn string
+function z85_decode()    end
+
+--- Generate a new CURVE keypair.
+-- This function avaliable only for ZeroMQ >= 4.0.1. Also you need build ZeroMQ with libsodium.
+--
+-- @tparam[opt=false] bool binary if true thern keys return as binary string else they reuturn as Z85 encoded.
+-- @treturn string public key
+-- @treturn string secret key
+function curve_keypair() end
 
 end
 
@@ -160,11 +193,11 @@ function context:get          () end
 -- @usage ctx:set(zmq.MAX_SOCKETS, 255)
 function context:set          () end
 
---- Get internal value of zmq Context as lightuser data.
--- You can use this value to pass a zmq Context to another lua_State.
+--- Get internal value of ZMQ Context as some Lua value.
+-- You can use this value to pass a ZMQ Context to another lua_State.
 --
 -- @see lzmq.init_ctx
--- @treturn lightuserdata
+-- @treturn lightuserdata|string|number ZMQ Context.
 function context:lightuserdata() end
 
 --- Return number of sockets associated with this context
@@ -273,6 +306,13 @@ function socket:disconnect    () end
 -- @usage  skt:disconnect{"tcp://127.0.0.1:5555","ipc://test.pub.ipc"}
 function socket:disconnect    () end
 
+--- Get internal value of ZMQ Socket as some Lua value.
+-- You can use this value to pass a ZMQ Socket to another lua_State.
+--
+-- @see lzmq.init_socket
+-- @treturn lightuserdata|string|number ZMQ Socket.
+function socket:lightuserdata() end
+
 --- Bind Socket to a local address.
 --
 -- @tparam string address zmq address
@@ -314,6 +354,19 @@ function socket:unbind        () end
 --
 -- @usage  skt:bind{"tcp://*:5555","ipc://test.pub.ipc"}
 function socket:unbind        () end
+
+--- Poll specific ZMQ Socket.
+--
+-- @tparam[opt=-1] number timeout timeout in milliseconds (-1 - infinity)
+-- @tparam[opt=zmq.POLLIN] number events poll events.
+-- @treturn[1] bool poll result (false if timeout)
+-- @treturn[1] number envents
+-- @treturn[2] nil
+-- @treturn[2] error
+--
+-- @usage
+-- if skt:poll(100) then return skt:recv() end
+function socket:poll          () end
 
 --- Send message over Socket.
 --
