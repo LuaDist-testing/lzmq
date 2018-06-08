@@ -8,7 +8,7 @@
 --  This file is part of lua-lzqm library.
 --
 
-local LZMQ_VERSION = "0.4.1"
+local LZMQ_VERSION = "0.4.2"
 
 local lua_version_t
 local function lua_version()
@@ -747,6 +747,18 @@ function Socket:poll(timeout, events)
   if ret == -1 then return nil, zerror() end
 
   return (bit.band(events, revents) ~= 0), revents
+end
+
+function Socket:has_event(...)
+  assert(select("#", ...) > 0)
+
+  local events, err = self:events()
+  if not events then return nil, err end
+
+  local res = {...}
+  for i = 1, #res do res[i] = (0 ~= bit.band(res[i], events)) end
+
+  return unpack(res)
 end
 
 end
