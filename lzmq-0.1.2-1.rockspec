@@ -1,22 +1,21 @@
 -- This file was automatically generated for the LuaDist project.
 
-
 package = "lzmq"
-version = "0.1.1-1"
+version = "0.1.2-1"
 
 -- LuaDist source
 source = {
-  tag = "0.1.1-1",
+  tag = "0.1.2-1",
   url = "git://github.com/LuaDist-testing/lzmq.git"
 }
 -- Original source
 -- source = {
---   url = "https://github.com/moteus/lzmq/archive/v0.1.1.zip",
---   dir = "lzmq-0.1.1",
+--   url = "https://github.com/moteus/lzmq/archive/v0.1.2.zip",
+--   dir = "lzmq-0.1.2",
 -- }
 
 description = {
-  summary = "Lua binding to ZeroMQ 3",
+  summary = "Lua bindings to ZeroMQ 3",
   homepage = "https://github.com/moteus/lzmq",
   license = "MIT/X11",
 }
@@ -28,8 +27,7 @@ dependencies = {
 
 external_dependencies = {
   ZMQ3 = {
-    header = "zmq.h",
-    library = "libzmq3",
+    header  = "zmq.h",
   }
 }
 
@@ -43,10 +41,17 @@ build = {
       ["lzmq.timer"] = {
         defines = {'USE_PERF_COUNT'}
       },
+      ["lzmq"] = {
+        libraries = {"libzmq3"},
+      }
     }},
-    unix = { modules = {
+    unix    = { modules = {
       ["lzmq.timer"] = {
         defines = {'USE_CLOCK_MONOTONIC', 'USE_GETTIMEOFDAY'},
+        libraries = {"rt"},
+      },
+      ["lzmq"] = {
+        libraries = {"zmq"},
       }
     }}
   },
@@ -56,7 +61,6 @@ build = {
       sources = {'src/lzmq.c','src/lzutils.c','src/poller.c',
                  'src/zcontext.c','src/zerror.c','src/zmsg.c',
                  'src/zpoller.c','src/zsocket.c'},
-      libraries = {"libzmq3"},
       incdirs = {"$(ZMQ3_INCDIR)"},
       libdirs = {"$(ZMQ3_LIBDIR)"},
       defines = {
@@ -70,7 +74,7 @@ build = {
     ["lzmq.timer"] = {
       sources = {'src/ztimer.c','src/lzutils.c'},
     },
-    ["lzmq.loop" ] = "lua/lzmq/loop.lua";
+    ["lzmq.loop"   ] = "lua/lzmq/loop.lua";
     ["lzmq.poller" ] = "lua/lzmq/poller.lua";
     ["lzmq.threads"] = "lua/lzmq/threads.lua";
   },

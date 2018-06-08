@@ -1,3 +1,21 @@
+local function zversion(zmq)
+  local version = zmq.version()
+  return string.format("%d.%d.%d", version[1], version[2], version[3])
+end
+
+local function iszvereq(zmq, mi, ma, bu)
+  local version = zmq.version()
+  return (mi == version[1]) and (ma == version[2]) and (bu == version[3])
+end
+
+print("------------------------------------")
+print("Lua version: " .. (_G.jit and _G.jit.version or _G._VERSION))
+print("ZQM version: " .. zversion(require"lzmq"))
+print("------------------------------------")
+print("")
+
+local HAS_RUNNER = not not lunit 
+
 local lunit    = require "lunit"
 -- @fix in lunit:
 --  return multiple values from assert_XXX
@@ -266,8 +284,6 @@ function test_socket()
   assert_function(skt.setopt_u64)
   assert_function(skt.setopt_str)
 
-  assert_function(skt.rcvmore                 )
-  assert_function(skt.get_rcvmore             )
 
   assert_function(skt.get_affinity            )
   assert_function(skt.set_affinity            )
@@ -288,8 +304,8 @@ function test_socket()
   assert_function(skt.set_sndbuf              )
   assert_function(skt.get_rcvbuf              )
   assert_function(skt.set_rcvbuf              )
+  assert_function(skt.rcvmore                 )
   assert_function(skt.get_rcvmore             )
-  assert_function(skt.set_rcvmore             )
   assert_function(skt.fd                      )
   assert_function(skt.get_fd                  )
   assert_function(skt.events                  )
@@ -675,20 +691,21 @@ function test_connect()
   assert_equal( "hello", assert_string(sub1:recv()))
   assert_equal( "hello", assert_string(sub1:recv()))
 
-  -- disconnect from first and get error from second
-  ok, err, str = sub1:disconnect{
-    ECHO_ADDR;
-    "inproc://pub.test.3";
-  }
-  assert_nil(ok)
-  assert_equal("inproc://pub.test.3", str)
+  if not iszvereq(zmq, 3, 2, 2) then -- fix in 3.2.3
+    -- disconnect from first and get error from second
+    ok, err, str = sub1:disconnect{
+      ECHO_ADDR;
+      "inproc://pub.test.3";
+    }
+    assert_nil(ok)
+    assert_equal("inproc://pub.test.3", str)
 
-  wait()
+    wait()
 
-  assert_true(pub:send("hello"))
-  assert_equal( "hello", assert_string(sub1:recv()))
-  assert_nil(sub1:recv())
-
+    assert_true(pub:send("hello"))
+    assert_equal( "hello", assert_string(sub1:recv()))
+    assert_nil(sub1:recv())
+  end
 end
 
 end
@@ -784,6 +801,7 @@ function test_recv_msg_more()
     assert_equal('hello', msg1, more)
     assert_true(more)
     assert_equal(more, sub:more())
+    assert_equal(1, sub:rcvmore())
 
     local msg2, more = sub:recv_new_msg()
     assert_userdata(msg2)
@@ -791,6 +809,7 @@ function test_recv_msg_more()
     assert_true(more)
     assert_equal(more, sub:more())
     assert_equal(more, msg2:more())
+    assert_equal(1, sub:rcvmore())
 
     local msg3 = assert_userdata(zmq.msg_init())
     local msg3_, more = msg3:recv(sub)
@@ -799,12 +818,14 @@ function test_recv_msg_more()
     assert_true(more)
     assert_equal(more, sub:more())
     assert_equal(more, msg3:more())
+    assert_equal(1, sub:rcvmore())
 
     local msgs = {}
     repeat 
       local msg, more = sub:recv()
       assert_string(msg, more)
       assert_equal(more, sub:more())
+      assert_equal(more and 1 or 0, sub:rcvmore())
       table.insert(msgs, msg)
     until not more
     assert_equal(2, #msgs)
@@ -1038,7 +1059,8 @@ local function test_timer(timer)
   assert_true(timer:started())
   assert_true(timer:setted())
   wait(100)
-  assert_true(timer:elapsed() >= 50) -- wait is not realy correct
+  local e = timer:elapsed()
+  assert_true((e >= 50)and(e <= 150), "expected value >=50,<=150 got: " .. tostring(e)) -- wait is not realy correct
   assert_equal(timer, timer:start())
   assert_true(timer:elapsed() < 50)
   assert_number(timer:elapsed())
@@ -1072,4 +1094,4 @@ end
 
 end
 
-lunit.run()
+if not HAS_RUNNER then lunit.run() end

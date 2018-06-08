@@ -1,7 +1,6 @@
 #include "lzutils.h"
 #include "lua.h"
 #include "lauxlib.h"
-#include <Windows.h>
 #include <time.h>
 #include <stdio.h>
 #include "ztimer.h"
@@ -9,6 +8,8 @@
 #include <float.h>
 
 #if defined(__WINDOWS__) 
+
+#include <Windows.h>
 
 #if !defined(USE_TICK_COUNT) && !defined(USE_TICK_COUNT64) && !defined(USE_PERF_COUNT)
 #  define USE_PERF_COUNT
@@ -108,7 +109,7 @@ static monotonic_time_t IncMonotonic(monotonic_time_t StartTime, monotonic_diff_
 typedef uint64_t absolute_time_t;
 typedef int64_t  absolute_diff_t;
 
-absolute_time_t GetUtcTime(){
+static absolute_time_t GetUtcTime(){
   FILETIME ft;
   absolute_time_t t;
   GetSystemTimeAsFileTime (&ft);
@@ -122,26 +123,29 @@ static absolute_diff_t GetUtcDelta(absolute_time_t StartTime, absolute_time_t En
 
 #else // not __WINDOWS__
 
+#include <sys/time.h>
+
 typedef uint64_t absolute_time_t;
 typedef int64_t  absolute_diff_t;
 typedef uint64_t monotonic_time_t;
 typedef int64_t  monotonic_diff_t;
 
+static void InitMonotonicTimer(){}
 
-absolute_time_t GetUtcTime(){
+static absolute_time_t GetUtcTime(){
 #ifdef USE_GETTIMEOFDAY
   struct timeval tv;
   if (0 == gettimeofday(&tv, NULL))
-    return (absolute_time_t)tv.tv_sec + tv.tv_usec / (absolute_time_t)(1000000);
+    return (absolute_time_t)tv.tv_sec * 1000 + (absolute_time_t)tv.tv_usec/1000;
 #endif
   return time(0);
 }
 
-monotonic_time_t GetMonotonicTime(){
+static monotonic_time_t GetMonotonicTime(){
 #ifdef USE_CLOCK_MONOTONIC
   struct timespec ts;
   if(0 == clock_gettime(CLOCK_MONOTONIC, &ts))
-    return (monotonic_time_t)tv.tv_sec + tv.tv_usec / (monotonic_time_t)(1000000000);
+    return (monotonic_time_t)ts.tv_sec * 1000 + (monotonic_time_t)ts.tv_nsec / 1000000;
 #endif
   return GetUtcTime();
 }
