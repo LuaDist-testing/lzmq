@@ -1,6 +1,7 @@
 #Lua binding to [ZeroMQ](http://zeromq.org) library.
 
 [![Build Status](https://travis-ci.org/moteus/lzmq.png?branch=master)](https://travis-ci.org/moteus/lzmq)
+[![Coverage Status](https://coveralls.io/repos/moteus/lzmq/badge.png?branch=master)](https://coveralls.io/r/moteus/lzmq?branch=master)
 
 Support ZeromMQ 3.2/4.0.<br/>
 This library is not dropin replacement for [lua-zmq](https://github.com/Neopallium/lua-zmq) library.<br/>
@@ -19,7 +20,7 @@ Because of LuaRocks repositories has latency you can use [MoonRocks](http://rock
 
 ##API
 This is short [API](http://moteus.github.io/lzmq/index.html) description.<br/>
-See also [exampes](https://github.com/moteus/lzmq-zguide) form [OMQ - The Guide](http://zguide.zeromq.org).<br/>
+See also [exampes](https://github.com/moteus/lzmq-zguide) from [OMQ - The Guide](http://zguide.zeromq.org).<br/>
 
 ##Performance
 To run same test you should copy original performance tests to `exampes/perf2/libzmq`

@@ -1,17 +1,17 @@
 -- This file was automatically generated for the LuaDist project.
 
 package = "lzmq"
-version = "0.3.5-1"
+version = "0.3.6-1"
 
 -- LuaDist source
 source = {
-  tag = "0.3.5-1",
+  tag = "0.3.6-1",
   url = "git://github.com/LuaDist-testing/lzmq.git"
 }
 -- Original source
 -- source = {
---   url = "https://github.com/moteus/lzmq/archive/v0.3.5.zip",
---   dir = "lzmq-0.3.5",
+--   url = "https://github.com/moteus/lzmq/archive/v0.3.6.zip",
+--   dir = "lzmq-0.3.6",
 -- }
 
 description = {
@@ -23,6 +23,7 @@ description = {
 dependencies = {
   "lua >= 5.1, < 5.3",
   -- "lua-llthreads >= 1.2"
+  -- "lua-llthreads2 >= 0.1.1"
 }
 
 external_dependencies = {
