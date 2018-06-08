@@ -1,21 +1,13 @@
--- This file was automatically generated for the LuaDist project.
-
 package = "lzmq"
-version = "0.1.3-1"
+version = "0.2.0-1"
 
--- LuaDist source
 source = {
-  tag = "0.1.3-1",
-  url = "git://github.com/LuaDist-testing/lzmq.git"
+  url = "https://github.com/moteus/lzmq/archive/v0.2.0.zip",
+  dir = "lzmq-0.2.0",
 }
--- Original source
--- source = {
---   url = "https://github.com/moteus/lzmq/archive/v0.1.3.zip",
---   dir = "lzmq-0.1.3",
--- }
 
 description = {
-  summary = "Lua bindings to ZeroMQ 3",
+  summary = "Lua bindings to ZeroMQ",
   homepage = "https://github.com/moteus/lzmq",
   license = "MIT/X11",
 }
@@ -28,13 +20,13 @@ dependencies = {
 external_dependencies = {
   platforms = {
     windows = {
-      ZMQ3 = {
+      ZMQ = {
         header  = "zmq.h",
-        library = "libzmq3",
+        library = "libzmq",
       }
     };
     unix = {
-      ZMQ3 = {
+      ZMQ = {
         header  = "zmq.h",
         -- library = "zmq", -- does not work !?
       }
@@ -53,7 +45,7 @@ build = {
         defines = {'USE_PERF_COUNT'}
       },
       ["lzmq"] = {
-        libraries = {"libzmq3"},
+        libraries = {"libzmq"},
       }
     }},
     unix    = { modules = {
@@ -72,8 +64,8 @@ build = {
       sources = {'src/lzmq.c','src/lzutils.c','src/poller.c',
                  'src/zcontext.c','src/zerror.c','src/zmsg.c',
                  'src/zpoller.c','src/zsocket.c'},
-      incdirs = {"$(ZMQ3_INCDIR)"},
-      libdirs = {"$(ZMQ3_LIBDIR)"},
+      incdirs = {"$(ZMQ_INCDIR)"},
+      libdirs = {"$(ZMQ_LIBDIR)"},
       defines = {
         'LUAZMQ_USE_SEND_AS_BUF',
         'LUAZMQ_USE_TEMP_BUFFERS',

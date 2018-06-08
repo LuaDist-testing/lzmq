@@ -31,11 +31,14 @@ end
 local bit     = orequire("bit32", "bit")
 
 local zlibs ={
+  "zmq",
+  "libzmq",
+  "zmq4",
+  "libzmq4",
+  "libzmq.so.4",
   "zmq3",
   "libzmq3",
   "libzmq.so.3",
-  "zmq",
-  "libzmq",
 }
 
 local ok, libzmq3 = pcall( oload, zlibs )
@@ -55,6 +58,7 @@ ffi.cdef[[
   void *zmq_ctx_new (void);
   int zmq_ctx_term (void *context);
   int zmq_ctx_destroy (void *context);
+  int zmq_ctx_shutdown (void *context);
   int zmq_ctx_set (void *context, int option, int optval);
   int zmq_ctx_get (void *context, int option);
 
@@ -125,6 +129,16 @@ local function inttoptr(val)
   return ffi.cast(pvoid_t, ffi.cast(uintptr_t, val))
 end
 
+local function pget(lib, elem)
+  local ok, err = pcall(function()
+    local m = lib[elem]
+    if nil ~= m then return m end
+    error("not found")
+  end)
+  if ok then return err end
+  return nil, err
+end
+
 local _M = {}
 
 -- zmq_version, zmq_errno, zmq_strerror, zmq_poll, zmq_device, zmq_proxy
@@ -168,14 +182,15 @@ function _M.zmq_ctx_new()
   return ctx
 end
 
-local has_term = pcall(function()
-  if libzmq3.zmq_ctx_term then return end
-  error("some error")
-end)
+if pget(libzmq3, "zmq_ctx_shutdown") then
+function _M.zmq_ctx_shutdown(ctx)
+  return libzmq3.zmq_ctx_shutdown(ctx)
+end
+end
 
-if has_term then
+if pget(libzmq3, "zmq_ctx_term") then
 function _M.zmq_ctx_term(ctx)
-  libzmq3.zmq_ctx_term(ffi.gc(ctx, nil))
+  return libzmq3.zmq_ctx_term(ffi.gc(ctx, nil))
 end
 else
 function _M.zmq_ctx_term(ctx)
@@ -434,8 +449,23 @@ _M.SOCKET_OPTIONS = {
   ZMQ_TCP_KEEPALIVE_INTVL     = {37, "RW", "int"};
   ZMQ_TCP_ACCEPT_FILTER       = {38, "WO", "str_arr"};
   ZMQ_DELAY_ATTACH_ON_CONNECT = {39, "RW", "int"};
+  ZMQ_IMMEDIATE               = {39, "RW", "int"};
   ZMQ_XPUB_VERBOSE            = {40, "RW", "int"};
   ZMQ_ROUTER_RAW              = {41, "RW", "int"};
+  ZMQ_IPV6                    = {42, "RW", "int"},
+  ZMQ_MECHANISM               = {43, "RO", "int"},
+  ZMQ_PLAIN_SERVER            = {44, "RW", "int"},
+  ZMQ_PLAIN_USERNAME          = {45, "RW", "str"},
+  ZMQ_PLAIN_PASSWORD          = {46, "RW", "str"},
+  ZMQ_CURVE_SERVER            = {47, "RW", "int"},
+  ZMQ_CURVE_PUBLICKEY         = {48, "RW", "str"},
+  ZMQ_CURVE_SECRETKEY         = {49, "RW", "str"},
+  ZMQ_CURVE_SERVERKEY         = {50, "RW", "str"},
+  ZMQ_PROBE_ROUTER            = {51, "WO", "int"},
+  ZMQ_REQ_CORRELATE           = {52, "WO", "int"},
+  ZMQ_REQ_RELAXED             = {53, "WO", "int"},
+  ZMQ_CONFLATE                = {54, "WO", "int"},
+  ZMQ_ZAP_DOMAIN              = {55, "RW", "str"},
 }
 
 _M.SOCKET_TYPES = {
@@ -466,6 +496,12 @@ _M.DEVICE = {
   ZMQ_QUEUE     = 3;
 }
 
+_M.SECURITY_MECHANISM = {
+ ZMQ_NULL  = 0;
+ ZMQ_PLAIN = 1;
+ ZMQ_CURVE = 2;
+}
+
 end
 
 _M.ptrtoint = ptrtoint
@@ -479,7 +515,7 @@ _M.bit            = bit
 
 local ZMQ_MAJOR, ZMQ_MINOR, ZMQ_PATCH = _M.zmq_version()
 assert(
-  (ZMQ_MAJOR == 3) and (ZMQ_MINOR >= 2), 
+  ((ZMQ_MAJOR == 3) and (ZMQ_MINOR >= 2)) or (ZMQ_MAJOR == 4),
   "Unsupported ZMQ version: " .. ZMQ_MAJOR .. "." .. ZMQ_MINOR .. "." .. ZMQ_PATCH
 )
 
