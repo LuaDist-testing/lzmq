@@ -1,7 +1,7 @@
 /*
   Author: Alexey Melnichuk <mimir@newmail.ru>
 
-  Copyright (C) 2013-2014 Alexey Melnichuk <mimir@newmail.ru>
+  Copyright (C) 2013-2017 Alexey Melnichuk <mimir@newmail.ru>
 
   Licensed according to the included 'LICENCE' document
 
@@ -18,11 +18,7 @@
 #include <memory.h>
 #include <stdlib.h>
 
-#if defined(_WIN32)
-typedef SOCKET fd_t;
-#else
-typedef int    fd_t;
-#endif
+#define fd_t lzmq_os_sock_t
 
 #define DEFINE_SKT_METHOD_1(NAME)              \
                                                \
@@ -664,6 +660,95 @@ static int luazmq_skt_closed (lua_State *L) {
   return 1;
 }
 
+static const char* luazmq_skt_type_name(int typ){
+  switch(typ){
+#ifdef ZMQ_PAIR
+    case ZMQ_PAIR:    {static const char *name = "PAIR"; return name;}
+#endif
+#ifdef ZMQ_PUB
+    case ZMQ_PUB:     {static const char *name = "PUB"; return name;}
+#endif
+#ifdef ZMQ_SUB
+    case ZMQ_SUB:     {static const char *name = "SUB"; return name;}
+#endif
+#ifdef ZMQ_REQ
+    case ZMQ_REQ:     {static const char *name = "REQ"; return name;}
+#endif
+#ifdef ZMQ_REP
+    case ZMQ_REP:     {static const char *name = "REP"; return name;}
+#endif
+#ifdef ZMQ_DEALER
+    case ZMQ_DEALER:  {static const char *name = "DEALER"; return name;}
+#endif
+#ifdef ZMQ_ROUTER
+    case ZMQ_ROUTER:  {static const char *name = "ROUTER"; return name;}
+#endif
+#ifdef ZMQ_PULL
+    case ZMQ_PULL:    {static const char *name = "PULL"; return name;}
+#endif
+#ifdef ZMQ_PUSH
+    case ZMQ_PUSH:    {static const char *name = "PUSH"; return name;}
+#endif
+#ifdef ZMQ_XPUB
+    case ZMQ_XPUB:    {static const char *name = "XPUB"; return name;}
+#endif
+#ifdef ZMQ_XSUB
+    case ZMQ_XSUB:    {static const char *name = "XSUB"; return name;}
+#endif
+#ifdef ZMQ_STREAM
+    case ZMQ_STREAM:  {static const char *name = "STREAM"; return name;}
+#endif
+#ifdef ZMQ_SERVER
+    case ZMQ_SERVER:  {static const char *name = "SERVER"; return name;}
+#endif
+#ifdef ZMQ_CLIENT
+    case ZMQ_CLIENT:  {static const char *name = "CLIENT"; return name;}
+#endif
+#ifdef ZMQ_RADIO
+    case ZMQ_RADIO:   {static const char *name = "RADIO"; return name;}
+#endif
+#ifdef ZMQ_DISH
+    case ZMQ_DISH:    {static const char *name = "DISH"; return name;}
+#endif
+#ifdef ZMQ_GATHER
+    case ZMQ_GATHER:  {static const char *name = "GATHER"; return name;}
+#endif
+#ifdef ZMQ_SCATTER
+    case ZMQ_SCATTER: {static const char *name = "SCATTER"; return name;}
+#endif
+#ifdef ZMQ_DGRAM
+    case ZMQ_DGRAM:   {static const char *name = "DGRAM"; return name;}
+#endif
+  }
+  return NULL;
+}
+
+static int luazmq_skt_tostring (lua_State *L) {
+  zsocket *skt = (zsocket *)luazmq_checkudatap (L, 1, LUAZMQ_SOCKET);
+  luaL_argcheck (L, skt != NULL, 1, LUAZMQ_PREFIX"socket expected");
+  if(skt->flags & LUAZMQ_FLAG_CLOSED){
+    lua_pushfstring(L, LUAZMQ_PREFIX"Socket[-1] (%p) - closed", skt);
+  }
+  else{
+    int typ; size_t len = sizeof(typ);
+    int rc = zmq_getsockopt(skt->skt, ZMQ_TYPE, &typ, &len);
+    const char *name = NULL;
+    if (rc != -1) {
+      name = luazmq_skt_type_name(typ);
+      if(name){
+        lua_pushfstring(L, LUAZMQ_PREFIX"Socket[%s] (%p)", name, skt);
+      }
+      else{
+        lua_pushfstring(L, LUAZMQ_PREFIX"Socket[%d] (%p)", typ, skt);
+      }
+    }
+    else{
+      lua_pushfstring(L, LUAZMQ_PREFIX"Socket[-1] (%p)", skt);
+    }
+  }
+  return 1;
+}
+
 static int luazmq_skt_has_event (lua_State *L) {
   zsocket *skt = luazmq_getsocket(L);
   int i, top = lua_gettop(L);
@@ -749,8 +834,17 @@ static int luazmq_skt_get_fdt (lua_State *L, int option_name) {
   }
 
   if (ret == -1) return luazmq_fail(L, skt);
-  lua_pushnumber(L, (lua_Number)option_value);
+  luazmq_push_os_socket(L, option_value);
   return 1;
+}
+
+static int luazmq_skt_set_fdt (lua_State *L, int option_name) {
+  zsocket *skt = luazmq_getsocket(L);
+  fd_t option_value = luazmq_check_os_socket(L, 2, "file descriptor expected");
+  int ret;
+  ret = zmq_setsockopt(skt->skt, option_name, &option_value, sizeof(option_value));
+  if (ret == -1) return luazmq_fail(L, skt);
+  return luazmq_pass(L);
 }
 
 static int luazmq_skt_get_u64 (lua_State *L, int option_name) {
@@ -1015,6 +1109,51 @@ static int luazmq_skt_set_str_arr (lua_State *L, int option_name) {
 #if defined(ZMQ_XPUB_WELCOME_MSG)
   DEFINE_SKT_OPT_WO(xpub_welcome_msg,         ZMQ_XPUB_WELCOME_MSG,               str       )
 #endif
+#if defined(ZMQ_STREAM_NOTIFY)
+  DEFINE_SKT_OPT_WO(stream_notify,            ZMQ_STREAM_NOTIFY,                  int       )
+#endif
+#if defined(ZMQ_INVERT_MATCHING)
+  DEFINE_SKT_OPT_RW(invert_matching,          ZMQ_INVERT_MATCHING,                int       )
+#endif
+#if defined(ZMQ_HEARTBEAT_IVL)
+  DEFINE_SKT_OPT_WO(heartbeat_ivl,            ZMQ_HEARTBEAT_IVL,                  int       )
+#endif
+#if defined(ZMQ_HEARTBEAT_TTL)
+  DEFINE_SKT_OPT_WO(heartbeat_ttl,            ZMQ_HEARTBEAT_TTL,                  int       )
+#endif
+#if defined(ZMQ_HEARTBEAT_TIMEOUT)
+  DEFINE_SKT_OPT_WO(heartbeat_timeout,        ZMQ_HEARTBEAT_TIMEOUT,              int       )
+#endif
+#if defined(ZMQ_XPUB_VERBOSER)
+  DEFINE_SKT_OPT_WO(xpub_verboser,            ZMQ_XPUB_VERBOSER,                  int       )
+#endif
+#if defined(ZMQ_CONNECT_TIMEOUT)
+  DEFINE_SKT_OPT_RW(connect_timeout,          ZMQ_CONNECT_TIMEOUT,                int       )
+#endif
+#if defined(ZMQ_TCP_MAXRT)
+  DEFINE_SKT_OPT_RW(tcp_maxrt,                ZMQ_TCP_MAXRT,                      int       )
+#endif
+#if defined(ZMQ_THREAD_SAFE)
+  DEFINE_SKT_OPT_RO(thread_safe,              ZMQ_THREAD_SAFE,                    int       )
+#endif
+#if defined(ZMQ_MULTICAST_MAXTPDU)
+  DEFINE_SKT_OPT_RW(multicast_maxtpdu,        ZMQ_MULTICAST_MAXTPDU,              int       )
+#endif
+#if defined(ZMQ_VMCI_BUFFER_SIZE)
+  DEFINE_SKT_OPT_RW(vmci_buffer_size,         ZMQ_VMCI_BUFFER_SIZE,               u64       )
+#endif
+#if defined(ZMQ_VMCI_BUFFER_MIN_SIZE)
+  DEFINE_SKT_OPT_RW(vmci_buffer_min_size,     ZMQ_VMCI_BUFFER_MIN_SIZE,           u64       )
+#endif
+#if defined(ZMQ_VMCI_BUFFER_MAX_SIZE)
+  DEFINE_SKT_OPT_RW(vmci_buffer_max_size,     ZMQ_VMCI_BUFFER_MAX_SIZE,           u64       )
+#endif
+#if defined(ZMQ_VMCI_CONNECT_TIMEOUT)
+  DEFINE_SKT_OPT_RW(vmci_connect_timeout,     ZMQ_VMCI_CONNECT_TIMEOUT,           int       )
+#endif
+#if defined(ZMQ_USE_FD)
+  DEFINE_SKT_OPT_RW(use_fd,                   ZMQ_USE_FD,                         fdt       )
+#endif
 
 //}
 
@@ -1075,11 +1214,12 @@ static const struct luaL_Reg luazmq_skt_methods[] = {
   {"setopt_u64",     luazmq_skt_setopt_u64   },
   {"setopt_str",     luazmq_skt_setopt_str   },
 
+  {"__tostring",     luazmq_skt_tostring     },
   {"on_close",       luazmq_skt_on_close     },
   {"__gc",           luazmq_skt_destroy      },
   {"close",          luazmq_skt_destroy      },
   {"closed",         luazmq_skt_closed       },
-  
+
   //{ options
 #if defined(ZMQ_AFFINITY)
   REGISTER_SKT_OPT_RW(affinity                  ),
@@ -1275,6 +1415,51 @@ static const struct luaL_Reg luazmq_skt_methods[] = {
 #endif
 #if defined(ZMQ_XPUB_WELCOME_MSG)
   REGISTER_SKT_OPT_WO(xpub_welcome_msg          ),
+#endif
+#if defined(ZMQ_STREAM_NOTIFY)
+  REGISTER_SKT_OPT_WO(stream_notify             ),
+#endif
+#if defined(ZMQ_INVERT_MATCHING)
+  REGISTER_SKT_OPT_RW(invert_matching           ),
+#endif
+#if defined(ZMQ_HEARTBEAT_IVL)
+  REGISTER_SKT_OPT_WO(heartbeat_ivl             ),
+#endif
+#if defined(ZMQ_HEARTBEAT_TTL)
+  REGISTER_SKT_OPT_WO(heartbeat_ttl             ),
+#endif
+#if defined(ZMQ_HEARTBEAT_TIMEOUT)
+  REGISTER_SKT_OPT_WO(heartbeat_timeout         ),
+#endif
+#if defined(ZMQ_XPUB_VERBOSER)
+  REGISTER_SKT_OPT_WO(xpub_verboser             ),
+#endif
+#if defined(ZMQ_CONNECT_TIMEOUT)
+  REGISTER_SKT_OPT_RW(connect_timeout           ),
+#endif
+#if defined(ZMQ_TCP_MAXRT)
+  REGISTER_SKT_OPT_RW(tcp_maxrt                 ),
+#endif
+#if defined(ZMQ_THREAD_SAFE)
+  REGISTER_SKT_OPT_RO(thread_safe               ),
+#endif
+#if defined(ZMQ_MULTICAST_MAXTPDU)
+  REGISTER_SKT_OPT_RW(multicast_maxtpdu         ),
+#endif
+#if defined(ZMQ_VMCI_BUFFER_SIZE)
+  REGISTER_SKT_OPT_RW(vmci_buffer_size          ),
+#endif
+#if defined(ZMQ_VMCI_BUFFER_MIN_SIZE)
+  REGISTER_SKT_OPT_RW(vmci_buffer_min_size      ),
+#endif
+#if defined(ZMQ_VMCI_BUFFER_MAX_SIZE)
+  REGISTER_SKT_OPT_RW(vmci_buffer_max_size      ),
+#endif
+#if defined(ZMQ_VMCI_CONNECT_TIMEOUT)
+  REGISTER_SKT_OPT_RW(vmci_connect_timeout      ),
+#endif
+#if defined(ZMQ_USE_FD)
+  REGISTER_SKT_OPT_RW(use_fd                    ),
 #endif
   //}
 
@@ -1498,6 +1683,51 @@ static const luazmq_int_const skt_options[] ={
 #endif
 #if defined(ZMQ_XPUB_WELCOME_MSG)
   DEFINE_ZMQ_CONST(XPUB_WELCOME_MSG          ),
+#endif
+#if defined(ZMQ_STREAM_NOTIFY)
+  DEFINE_ZMQ_CONST(STREAM_NOTIFY             ),
+#endif
+#if defined(ZMQ_INVERT_MATCHING)
+  DEFINE_ZMQ_CONST(INVERT_MATCHING           ),
+#endif
+#if defined(ZMQ_HEARTBEAT_IVL)
+  DEFINE_ZMQ_CONST(HEARTBEAT_IVL             ),
+#endif
+#if defined(ZMQ_HEARTBEAT_TTL)
+  DEFINE_ZMQ_CONST(HEARTBEAT_TTL             ),
+#endif
+#if defined(ZMQ_HEARTBEAT_TIMEOUT)
+  DEFINE_ZMQ_CONST(HEARTBEAT_TIMEOUT         ),
+#endif
+#if defined(ZMQ_XPUB_VERBOSER)
+  DEFINE_ZMQ_CONST(XPUB_VERBOSER             ),
+#endif
+#if defined(ZMQ_CONNECT_TIMEOUT)
+  DEFINE_ZMQ_CONST(CONNECT_TIMEOUT           ),
+#endif
+#if defined(ZMQ_TCP_MAXRT)
+  DEFINE_ZMQ_CONST(TCP_MAXRT                 ),
+#endif
+#if defined(ZMQ_THREAD_SAFE)
+  DEFINE_ZMQ_CONST(THREAD_SAFE               ),
+#endif
+#if defined(ZMQ_MULTICAST_MAXTPDU)
+  DEFINE_ZMQ_CONST(MULTICAST_MAXTPDU         ),
+#endif
+#if defined(ZMQ_VMCI_BUFFER_SIZE)
+  DEFINE_ZMQ_CONST(VMCI_BUFFER_SIZE          ),
+#endif
+#if defined(ZMQ_VMCI_BUFFER_MIN_SIZE)
+  DEFINE_ZMQ_CONST(VMCI_BUFFER_MIN_SIZE      ),
+#endif
+#if defined(ZMQ_VMCI_BUFFER_MAX_SIZE)
+  DEFINE_ZMQ_CONST(VMCI_BUFFER_MAX_SIZE      ),
+#endif
+#if defined(ZMQ_VMCI_CONNECT_TIMEOUT)
+  DEFINE_ZMQ_CONST(VMCI_CONNECT_TIMEOUT      ),
+#endif
+#if defined(ZMQ_USE_FD)
+  DEFINE_ZMQ_CONST(USE_FD                    ),
 #endif
   {NULL, 0}
 };

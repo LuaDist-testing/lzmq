@@ -19,6 +19,7 @@ local SKIP       = function(msg) return function() return skip(msg) end end
 
 local IS_LUA52 = _VERSION >= 'Lua 5.2'
 local TEST_FFI = ("ffi" == os.getenv("LZMQ"))
+local TRAVIS   = (os.getenv("TRAVIS") == 'true')
 
 -- value >= expected
 local function ge(expected, value)
@@ -42,9 +43,10 @@ local zloop  = require (LZMQ .. ".loop"  )
 local zpoller= require (LZMQ .. ".poller")
 
 print("------------------------------------")
-print("Lua  version: " .. (_G.jit and _G.jit.version or _G._VERSION))
-print("ZQM  version: " .. zversion(zmq))
-print("lzmq version: " .. zmq._VERSION .. (TEST_FFI and " (FFI)" or ""))
+print("Module    name: " .. zmq._NAME);
+print("Module version: " .. zmq._VERSION);
+print("Lua    version: " .. (_G.jit and _G.jit.version or _G._VERSION))
+print("ZMQ    version: " .. table.concat(zmq.version(), '.'))
 print("------------------------------------")
 print("")
 
@@ -108,6 +110,16 @@ function test_constant()
     assert_number(zmq.POLLIN                         )
     assert_number(zmq.POLLOUT                        )
     assert_number(zmq.POLLERR                        )
+  end
+  do -- context opt
+    assert_number(zmq.IO_THREADS                     )
+    assert_number(zmq.MAX_SOCKETS                    )
+    -- 4.1.0
+    -- assert_number(zmq.SOCKET_LIMIT                   )
+    -- assert_number(zmq.THREAD_PRIORITY                )
+    -- assert_number(zmq.THREAD_SCHED_POLICY            )
+    -- 4.2.2
+    -- assert_number(zmq.MAX_MSGSZ                      )
   end
   do -- socket opt
     assert_number(zmq.AFFINITY                       )
@@ -587,6 +599,23 @@ function test_socket_context()
   assert_equal(ctx, skt:context())
 end
 
+function test_tostring()
+  assert_match('LuaZMQ',  tostring(skt))
+  assert_match('LuaZMQ',  tostring(ctx))
+  assert_match('Socket',  tostring(skt))
+  assert_match('SUB',     tostring(skt))
+  assert_match('Context', tostring(ctx))
+
+  ctx:destroy()
+
+  assert_match('LuaZMQ',  tostring(skt))
+  assert_match('LuaZMQ',  tostring(ctx))
+  assert_match('Socket',  tostring(skt))
+  assert_match('Context', tostring(ctx))
+  assert_match('closed',  tostring(skt))
+  assert_match('closed',  tostring(ctx))
+end
+
 end
 
 local _ENV = TEST_CASE'context'              if ENABLE then
@@ -598,6 +627,7 @@ function setup() end
 function teardown()
   if skt then skt:close()   end
   if ctx then ctx:destroy() end
+  skt, ctx = nil
 end
 
 function test_context_shutdown()
@@ -640,6 +670,16 @@ function test_context_shutdown_autoclose()
   ctx:autoclose(skt)
   assert_true(ctx:shutdown())
   assert_true(skt:closed())
+end
+
+function test_context_fail_create_socket()
+  ctx = assert(is_zcontext(zmq.context()))
+  local err
+  assert_pass(function()
+    skt, err = ctx:socket{'PUB', subscribe = ''}
+  end)
+  assert_nil(skt)
+  assert_match('EINVAL', tostring(err))
 end
 
 end
@@ -1709,6 +1749,11 @@ function test_pollable_interface()
   ret = t[sub3] assert_table(ret) assert_equal("hello", ret[1]) assert_equal(false, ret[2])
 end
 
+function test_tostring()
+  assert_match('LuaZMQ', tostring(poller))
+  assert_match('Poller', tostring(poller))
+end
+
 end
 
 local _ENV = TEST_CASE'z85 encode'           if ENABLE then
@@ -1793,10 +1838,41 @@ function test_generate_bin()
   assert_equal(32, #sec)
 end
 
+function test_curve_public()
+  if not zmq.curve_public then
+    return skip("curve_public not supported by libzmq since version 4.2.2")
+  end
+
+  local pub, sec = zmq.curve_keypair()
+  if not pub then
+    assert(error_is(sec, zmq.errors.ENOTSUP))
+    return skip("you need build libzmq with libsodium")
+  end
+
+  local derived_public = assert_string(zmq.curve_public(sec))
+  assert_equal(pub, derived_public)
+end
+
+function test_curve_public_bin()
+  if not zmq.curve_public then
+    return skip("curve_public not supported by libzmq since version 4.2.2")
+  end
+
+  local pub, sec = zmq.curve_keypair()
+  if not pub then
+    assert(error_is(sec, zmq.errors.ENOTSUP))
+    return skip("you need build libzmq with libsodium")
+  end
+
+  local derived_public = assert_string(zmq.curve_public(sec, true))
+  assert_equal(pub, zmq.z85_encode(derived_public))
+end
+
 end
 end
 
 local _ENV = TEST_CASE'monitor'              if ENABLE then
+if TRAVIS then test = SKIP"Skip on travis because of assertion falure inside libzmq" else
 
 local ctx, loop, timer, srv, mon
 
@@ -1960,7 +2036,7 @@ function test_reset_monitor()
   assert(error_is(err, zmq.errors.EAGAIN))
 end
 
-end
+end end
 
 local _ENV = TEST_CASE'Clone socket'         if ENABLE then
 
