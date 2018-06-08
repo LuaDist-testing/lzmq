@@ -83,6 +83,10 @@ function actor_mt:socket()
   return self._pipe
 end
 
+function actor_mt:endpoint()
+   return self._endpoint
+end
+
 function actor_mt:close()
   self._pipe:close()
   self._thread:join()
@@ -90,10 +94,11 @@ end
 
 end
 
-local function actor_new(thread, pipe)
+local function actor_new(thread, pipe, endpoint)
   local o = setmetatable({
     _thread = thread;
     _pipe   = pipe;
+    _endpoint = endpoint;
   }, actor_mt)
 
   return o
@@ -101,48 +106,141 @@ end
 
 local string  = require"string"
 local Threads = require"lzmq.llthreads.ex"
+
 return function(ZMQ_NAME)
 
 local zmq = require(ZMQ_NAME)
 
-local function make_pipe(ctx)
-  local pipe = ctx:socket(zmq.PAIR)
-  local pipe_endpoint = "inproc://lzmq.pipe." .. pipe:fd() .. "." .. rand_bytes(10);
-  local ok, err = pipe:bind(pipe_endpoint)
-  if not ok then 
-    pipe:close()
-    return nil, err
+-- for inproc or ipc
+local function create_local_pipe_address(namespace)
+  return "lzmq.pipe." .. namespace .. "." .. rand_bytes(10)
+end
+local function create_tcp_pipe_address(_)
+  return "127.0.0.1:*"
+end
+
+local supported_transports = {
+  ipc    = create_local_pipe_address,
+  inproc = create_local_pipe_address,
+  tcp    = create_tcp_pipe_address
+}
+
+local function create_pipe_address(transport, namespace)
+  local fun = supported_transports[transport]
+  assert(fun, "unsupported transport " .. transport)
+  return fun(namespace)
+end
+
+local function create_pipe_endpoint(transport, address)
+  return transport .. "://" .. address
+end
+
+local function strip_trailing_null_char(str)
+  -- remove null terminated char if exists
+  if str:byte(-1) == 0 then
+     return str:sub(1,-2)
+  else
+     return str
   end
-  return pipe, pipe_endpoint
 end
 
-local zthreads = {}
-
-function zthreads.run(ctx, code, ...)
-  if ctx then ctx = ctx:lightuserdata() end
-  run_starter.source = code
-  return Threads.new(run_starter, ZMQ_NAME, ctx, ...)
+local function extract_endpoint(pipe, transport, pipe_endpoint)
+  if transport == "inproc" then
+     return pipe_endpoint
+  elseif transport == "ipc" or transport == "tcp" then
+     return strip_trailing_null_char(pipe:last_endpoint())
+  else
+     error("unsupported transport " .. transport)
+  end
 end
 
-function zthreads.fork(ctx, code, ...)
-  local pipe, endpoint = make_pipe(ctx)
-  if not pipe then return nil, endpoint end
+local function split_transport(ep)
+  local transport, address = string.match(ep, "^(%w+)://(.+)$")
+  if not transport then transport = ep end
+  return transport, address
+end
 
-  ctx = ctx:lightuserdata()
-  fork_starter.source = code
-  local ok, err = Threads.new(fork_starter, ZMQ_NAME, ctx, endpoint, ...)
+local function make_pipe(ctx, opt)
+  opt = type(opt) == "table" and opt or {}
+  local pipe = ctx:socket(zmq.PAIR)
+
+  local transport, address
+  if opt.pipe then
+    assert(type(opt.pipe) == 'string', 'Currently supports only string type')
+    transport, address = split_transport(opt.pipe)
+  else
+    transport = "inproc"
+  end
+  address = address or create_pipe_address(transport, pipe:fd())
+
+  local pipe_endpoint = create_pipe_endpoint(transport, address)
+  local ok, err = pipe:bind(pipe_endpoint)
   if not ok then
     pipe:close()
     return nil, err
   end
-  return ok, pipe
+  return pipe, extract_endpoint(pipe, transport, pipe_endpoint)
+end
+
+local function thread_opts(code, opt)
+  if type(code) == "table" then
+    local source   = assert(code[1] or code.source)
+    local lua_init = code.lua_init or opt.lua_init
+    local prelude  = opt.prelude
+    if code.prelude then
+      --! @todo support user prelude as `@filename`
+      local user_prelude = code.prelude
+      if type(user_prelude) == 'function' then
+        user_prelude = T(user_prelude)
+      end
+      if type(prelude) == 'function' then
+        prelude = T(prelude)
+      end
+
+      prelude = string.format([[
+        local loadstring = loadstring or load
+        local prelude1 = loadstring(%q)
+        local prelude2 = loadstring(%q)
+        return prelude1(prelude2(...))
+      ]], user_prelude, prelude)
+    end
+    return {source = source, prelude = prelude, lua_init = lua_init}
+  end
+
+  return {
+     source = assert(code),
+     prelude = opt.prelude,
+     lua_init = opt.lua_init
+  }
+end
+
+local function actor_assert(thread, pipe, endpoint)
+  if not thread then return nil, pipe end
+  return actor_new(thread, pipe, endpoint)
+end
+
+local zthreads = {}
+
+function zthreads.run(ctx, opts, ...)
+  if ctx then ctx = ctx:lightuserdata() end
+  return Threads.new(thread_opts(opts, run_starter), ZMQ_NAME, ctx, ...)
+end
+
+function zthreads.fork(ctx, opt, ...)
+  local pipe, endpoint = make_pipe(ctx, opt)
+  if not pipe then return nil, endpoint end
+
+  ctx = ctx:lightuserdata()
+  local thread, err = Threads.new(thread_opts(opt, fork_starter), ZMQ_NAME, ctx, endpoint, ...)
+  if not thread then
+    pipe:close()
+    return nil, err
+  end
+  return thread, pipe, endpoint
 end
 
 function zthreads.actor(...)
-  local thread, pipe = zthreads.fork(...)
-  if not thread then return nil, pipe end
-
-  return actor_new(thread, pipe)
+  return actor_assert(zthreads.fork(...))
 end
 
 function zthreads.xrun(...)

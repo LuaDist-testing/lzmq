@@ -79,7 +79,9 @@ local include_thread  = [[
 ]]
 
 local _ENV = TEST_CASE'proxy' if true then
-if not zmq.proxy then test = SKIP"zmq_proxy does not support" else
+if not zmq.proxy then test = SKIP"zmq_proxy does not support"
+elseif is_zmq_le(zmq, 4,0,6) then test = SKIP"zmq_proxy on 4.0.6 !!!DOES NOT WORK AT ALL!!!"
+else
 
 local cli_endpoint = "inproc://client"
 local srv_endpoint = "inproc://server"
@@ -107,11 +109,14 @@ function test_capture()
   --]], cli_endpoint, srv_endpoint)
 
   assert(thread, pipe)
+  pipe:set_rcvtimeo(1000)
 
   local cli = assert(ctx:socket{zmq.REQ, bind = cli_endpoint, rcvtimeo=1000})
   local srv = assert(ctx:socket{zmq.REP, bind = srv_endpoint, rcvtimeo=1000})
 
   assert_equal(thread, thread:start())
+
+  ztimer.sleep(1000)
 
   assert(cli:send("hello"))
 
@@ -149,7 +154,9 @@ function test_basic()
   local cli = assert(ctx:socket{zmq.REQ, bind = cli_endpoint, rcvtimeo=1000})
   local srv = assert(ctx:socket{zmq.REP, bind = srv_endpoint, rcvtimeo=1000})
 
-  thread:start()
+  assert_equal(thread, thread:start())
+
+  ztimer.sleep(1000)
 
   assert(cli:send("hello"))
   assert_equal('hello', srv:recv())
@@ -165,7 +172,8 @@ end
 
 local _ENV = TEST_CASE'proxy_steerable' if true then
 if not zmq.proxy_steerable then test = SKIP"zmq_proxy_steerable does not support"
-elseif is_zmq_le(zmq, 4,0,6) then test = SKIP"ZeroMQ 4.0.6 invalid implementation"
+elseif is_zmq_le(zmq, 4,0,5) then test = SKIP"ZeroMQ 4.0.5 invalid implementation"
+elseif is_zmq_le(zmq, 4,0,6) then test = SKIP"zmq_proxy_steerable on 4.0.6 !!!DOES NOT WORK AT ALL!!!"
 else
 
 local cli_endpoint = "inproc://client"
@@ -199,7 +207,9 @@ function test_control()
   local srv = assert(ctx:socket{zmq.REP, bind = srv_endpoint, rcvtimeo=1000})
   pipe:set_rcvtimeo(1000)
 
-  thread:start()
+  assert_equal(thread, thread:start())
+
+  ztimer.sleep(1000)
 
   pipe:send("PAUSE")
   assert(cli:send("hello"))
@@ -231,7 +241,9 @@ function test_basic()
   local cli = assert(ctx:socket{zmq.REQ, bind = cli_endpoint, rcvtimeo=1000})
   local srv = assert(ctx:socket{zmq.REP, bind = srv_endpoint, rcvtimeo=1000})
 
-  thread:start()
+  assert_equal(thread, thread:start())
+
+  ztimer.sleep(1000)
 
   assert(cli:send("hello"))
   assert_equal('hello', srv:recv())
