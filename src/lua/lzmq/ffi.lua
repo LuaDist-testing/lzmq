@@ -44,7 +44,7 @@ end
 
 local FLAGS = api.FLAGS
 local ERRORS = api.ERRORS
-local ZMQ_LINGER = api.SOCKET_OPTIONS.ZMQ_LINGER
+local ZMQ_LINGER = api.SOCKET_OPTIONS.ZMQ_LINGER[1]
 local ZMQ_POLLIN = FLAGS.ZMQ_POLLIN
 
 
@@ -433,6 +433,38 @@ Socket.bind       = gen_skt_bind(api.zmq_bind       )
 Socket.unbind     = gen_skt_bind(api.zmq_unbind     )
 Socket.connect    = gen_skt_bind(api.zmq_connect    )
 Socket.disconnect = gen_skt_bind(api.zmq_disconnect )
+
+local RANDOM_PORT_BASE = 0xC000
+local RANDOM_PORT_MAX  = 0xFFFF
+
+function Socket:bind_to_random_port(address, port, tries)
+  port  = port or RANDOM_PORT_BASE
+  tries = tries or (RANDOM_PORT_MAX - port + 1)
+
+  assert(type(address) == 'string')
+  assert((port > 0) and (port <= RANDOM_PORT_MAX), "invalid port number")
+  assert(tries > 0, "invalid max tries value")
+
+  local ok, err
+  while((port <= RANDOM_PORT_MAX)and(tries > 0))do
+    local a = address .. ':' .. tostring(port)
+    ok, err = self:bind(a)
+    if ok then return port end
+
+    if err:no() ~= ERRORS.EADDRINUSE then
+      local msg = err:msg()
+      if msg ~= "Address in use" then 
+        if not msg:lower():find("address .- in use") then
+          break
+        end
+      end
+    end
+
+    port, tries = port + 1, tries - 1
+  end
+
+  return nil, err or zerror(ERRORS.EINVAL)
+end
 
 function Socket:send(msg, flags)
   assert(not self:closed())
@@ -1037,7 +1069,7 @@ end
 
 do -- zmq
 
-zmq._VERSION = "0.3.2-dev"
+zmq._VERSION = "0.3.3"
 
 function zmq.version(unpack)
   local mj,mn,pt = api.zmq_version()
@@ -1124,9 +1156,22 @@ function zmq.device(dtype, frontend, backend)
 end
 
 function zmq.proxy(frontend, backend, capture)
-  local ret = api.zmq_proxy(frontend:handle(), backend:handle(), capture:handle())
+  capture = capture and capture:handle() or api.NULL
+  local ret = api.zmq_proxy(frontend:handle(), backend:handle(), capture)
   if ret == -1 then return nil, zerror() end
   return true
+end
+
+if api.zmq_proxy_steerable then
+
+function zmq.proxy_steerable(frontend, backend, capture, control)
+  capture = capture and capture:handle() or api.NULL
+  control = control and control:handle() or api.NULL
+  local ret = api.zmq_proxy_steerable(frontend:handle(), backend:handle(), capture, control)
+  if ret == -1 then return nil, zerror() end
+  return true
+end
+
 end
 
 zmq.z85_encode = api.zmq_z85_encode

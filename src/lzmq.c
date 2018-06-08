@@ -54,8 +54,8 @@ LUAZMQ_EXPORT int luazmq_socket (lua_State *L, void *skt, unsigned char own) {
 
 #define LUAZMQ_VERSION_MAJOR 0
 #define LUAZMQ_VERSION_MINOR 3
-#define LUAZMQ_VERSION_PATCH 2
-#define LUAZMQ_VERSION_COMMENT "dev"
+#define LUAZMQ_VERSION_PATCH 3
+// #define LUAZMQ_VERSION_COMMENT "dev"
 
 //-----------------------------------------------------------
 // common
@@ -286,13 +286,25 @@ static int luazmq_device(lua_State *L){
 static int luazmq_proxy(lua_State *L){
   zsocket *fe = luazmq_getsocket_at(L,1);
   zsocket *be = luazmq_getsocket_at(L,2);
-  zsocket *cp = NULL;
-  int ret;
-  if(!lua_isnoneornil(L,3)) cp = luazmq_getsocket_at(L,3);
-  ret = zmq_proxy(fe->skt, be->skt, cp ? (cp->skt) : NULL);
+  zsocket *cp = lua_isnoneornil(L,3)?NULL:luazmq_getsocket_at(L,3);
+  int ret = zmq_proxy(fe->skt, be->skt, cp ? (cp->skt) : NULL);
   if (ret == -1) return luazmq_fail(L,NULL);
 
   assert(0 && "The zmq_proxy() function always returns -1 and errno set to ETERM");
+  return luazmq_pass(L);
+}
+
+#endif
+
+#ifdef LUAZMQ_SUPPORT_PROXY_STEERABLE
+
+static int luazmq_proxy_steerable(lua_State *L){
+  zsocket *fe = luazmq_getsocket_at(L,1);
+  zsocket *be = luazmq_getsocket_at(L,2);
+  zsocket *cp = lua_isnoneornil(L,3)?NULL:luazmq_getsocket_at(L,3);
+  zsocket *cn = lua_isnoneornil(L,4)?NULL:luazmq_getsocket_at(L,4);
+  int ret = zmq_proxy_steerable(fe->skt, be->skt, cp ? (cp->skt) : NULL, cn ? (cn->skt) : NULL);
+  if (ret == -1) return luazmq_fail(L,NULL);
   return luazmq_pass(L);
 }
 
@@ -326,7 +338,7 @@ static int luazmq_z85_encode(lua_State *L){
   }
 
   dest = LUAZMQ_ALLOC_TEMP(buffer_storage, dest_len);
-  if(!zmq_z85_encode(dest, (char*)data, len))lua_pushnil(L);
+  if(!zmq_z85_encode(dest, (unsigned char*)data, len))lua_pushnil(L);
   else lua_pushlstring(L, dest, dest_len - 1);
   LUAZMQ_FREE_TEMP(buffer_storage, dest);
 
@@ -346,7 +358,7 @@ static int luazmq_z85_decode(lua_State *L){
   }
 
   dest = LUAZMQ_ALLOC_TEMP(buffer_storage, dest_len);
-  if(!zmq_z85_decode(dest, (char*)data)) lua_pushnil(L);
+  if(!zmq_z85_decode((unsigned char*)dest, (char*)data)) lua_pushnil(L);
   else lua_pushlstring(L, dest, dest_len);
   LUAZMQ_FREE_TEMP(buffer_storage, dest);
 
@@ -370,8 +382,8 @@ static int luazmq_curve_keypair(lua_State *L){
     uint8_t secret_key_bin[32];
     zmq_z85_decode (public_key_bin, public_key);
     zmq_z85_decode (secret_key_bin, secret_key);
-    lua_pushlstring(L, public_key_bin, 32);
-    lua_pushlstring(L, secret_key_bin, 32);
+    lua_pushlstring(L, (char*)public_key_bin, 32);
+    lua_pushlstring(L, (char*)secret_key_bin, 32);
     return 2;
   }
 
@@ -396,6 +408,10 @@ static const struct luaL_Reg luazmqlib[]   = {
 
 #ifdef LUAZMQ_SUPPORT_PROXY
   { "proxy",          luazmq_proxy            },
+#endif
+
+#ifdef LUAZMQ_SUPPORT_PROXY_STEERABLE
+  { "proxy_steerable",luazmq_proxy_steerable  },
 #endif
 
 #ifdef LUAZMQ_SUPPORT_Z85

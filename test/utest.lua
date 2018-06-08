@@ -13,6 +13,7 @@ local HAS_RUNNER = not not lunit
 local lunit      = require "lunit"
 local TEST_CASE  = assert(lunit.TEST_CASE)
 local skip       = lunit.skip or function() end
+local SKIP       = function(msg) return function() return skip(msg) end end
 
 local IS_LUA52 = _VERSION >= 'Lua 5.2'
 local TEST_FFI = ("ffi" == os.getenv("LZMQ"))
@@ -767,6 +768,10 @@ function setup()
   ctx:autoclose(sub2)
   sub3 = assert(is_zsocket(ctx:socket(zmq.SUB)))
   ctx:autoclose(sub3)
+  
+  sub1:set_rcvtimeo(1000)
+  sub2:set_rcvtimeo(1000)
+  sub3:set_rcvtimeo(1000)
 end
 
 function teardown()
@@ -838,6 +843,33 @@ function test_connect()
     assert_equal( "hello", assert_string(sub1:recv()))
     assert_nil(sub1:recv())
   end
+end
+
+function test_bind_random_port()
+  local port1 = assert_number(pub:bind_to_random_port("tcp://127.0.0.1"))
+  local port2 = assert_number(pub:bind_to_random_port("tcp://127.0.0.1"))
+  assert_not_equal(port1, port2)
+  wait()
+  sub1:subscribe("")
+  sub2:subscribe("")
+  assert(sub1:connect("tcp://127.0.0.1:" .. port1))
+  assert(sub2:connect("tcp://127.0.0.1:" .. port2))
+  wait()
+  
+  assert(pub:send("HELLO"))
+  assert_equal("HELLO", sub1:recv())
+  assert_equal("HELLO", sub2:recv())
+end
+
+function test_bind_random_port_fail()
+  assert_nil(pub:bind_to_random_port("tcp//127.0.0.1"))
+  local port1 = assert_number(pub:bind_to_random_port("tcp://127.0.0.1"))
+  assert_nil(pub:bind_to_random_port("tcp://127.0.0.1", port1, 1))
+end
+
+function test_bind_random_port_error()
+  assert_error(function() pub:bind_to_random_port("tcp://127.0.0.1", 0) end)
+  assert_error(function() pub:bind_to_random_port("tcp://127.0.0.1", 1, 0) end)
 end
 
 end
@@ -1482,7 +1514,8 @@ end
 
 end
 
-local _ENV = TEST_CASE'z85 encode'           if true and zmq.z85_encode then
+local _ENV = TEST_CASE'z85 encode'           if true then
+if not zmq.z85_encode then test = SKIP"zmq_z85_encode does not support" else
 
 local key_bin = "\084\252\186\036\233\050\073\150\147\022\251\097\124\135\043\176" ..
                 "\193\209\255\020\128\004\039\197\148\203\250\207\027\194\214\082"
@@ -1514,8 +1547,10 @@ function test_decode_wrong_size()
 end
 
 end
+end
 
-local _ENV = TEST_CASE'curve keypair'        if true and zmq.curve_keypair then
+local _ENV = TEST_CASE'curve keypair'        if true then
+if not zmq.curve_keypair then test = SKIP"zmq_curve_keypair does not support" else
 
 function test_generate_z85()
   local pub, sec = zmq.curve_keypair()
@@ -1541,6 +1576,7 @@ function test_generate_bin()
   assert_equal(32, #sec)
 end
 
+end
 end
 
 local _ENV = TEST_CASE'monitor'              if true then
