@@ -1,19 +1,10 @@
--- This file was automatically generated for the LuaDist project.
-
----------
 package = "lzmq"
-version = "0.1.0-1"
+version = "0.1.1-1"
 
--- LuaDist source
 source = {
-  tag = "0.1.0-1",
-  url = "git://github.com/LuaDist-testing/lzmq.git"
+  url = "https://github.com/moteus/lzmq/archive/v0.1.1.zip",
+  dir = "lzmq-0.1.1",
 }
--- Original source
--- source = {
---   url = "https://github.com/moteus/lzmq/archive/v0.1.0.zip",
---   dir = "lzmq-0.1.0",
--- }
 
 description = {
   summary = "Lua bindings to ZeroMQ 3",
@@ -28,7 +19,7 @@ dependencies = {
 
 external_dependencies = {
   ZMQ3 = {
-    header = "zmq.h",
+    header  = "zmq.h",
     library = "libzmq3",
   }
 }
@@ -44,7 +35,7 @@ build = {
         defines = {'USE_PERF_COUNT'}
       },
     }},
-    unix = { modules = {
+    unix    = { modules = {
       ["lzmq.timer"] = {
         defines = {'USE_CLOCK_MONOTONIC', 'USE_GETTIMEOFDAY'},
       }
@@ -60,7 +51,9 @@ build = {
       incdirs = {"$(ZMQ3_INCDIR)"},
       libdirs = {"$(ZMQ3_LIBDIR)"},
       defines = {
-        'LUAZMQ_USE_ERR_TYPE_OBJECT'
+        'LUAZMQ_USE_SEND_AS_BUF',
+        'LUAZMQ_USE_TEMP_BUFFERS',
+        'LUAZMQ_USE_ERR_TYPE_OBJECT',
         -- 'LUAZMQ_USE_ERR_TYPE_NUMBER'
         -- 'LUAZMQ_USE_ERR_TYPE_STRING'
       },
@@ -68,7 +61,7 @@ build = {
     ["lzmq.timer"] = {
       sources = {'src/ztimer.c','src/lzutils.c'},
     },
-    ["lzmq.loop" ] = "lua/lzmq/loop.lua";
+    ["lzmq.loop"   ] = "lua/lzmq/loop.lua";
     ["lzmq.poller" ] = "lua/lzmq/poller.lua";
     ["lzmq.threads"] = "lua/lzmq/threads.lua";
   },
