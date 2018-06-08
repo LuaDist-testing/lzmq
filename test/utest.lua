@@ -1533,9 +1533,29 @@ function test_encode()
   assert_equal(key_txt, encoded)
 end
 
+local function encoden(str, n) return zmq.z85_encode(str:rep(n)) end
+
+local function decoden(str, n) return zmq.z85_decode(str:rep(n)) end
+
+function test_encodeN()
+  local encoded = assert_string(encoden(key_bin, 100))
+  assert_equal(key_txt:rep(100), encoded)
+
+  local encoded = assert_string(encoden(key_bin, 1000))
+  assert_equal(key_txt:rep(1000), encoded)
+end
+
 function test_decode()
   local decoded = assert_string(zmq.z85_decode(key_txt))
   assert_equal(dump(key_bin), dump(decoded))
+end
+
+function test_decodeN()
+  local decoded = assert_string(decoden(key_txt, 100))
+  assert_equal(dump(key_bin:rep(100)), dump(decoded))
+
+  local decoded = assert_string(decoden(key_txt, 1000))
+  assert_equal(dump(key_bin:rep(1000)), dump(decoded))
 end
 
 function test_encode_wrong_size()
@@ -1713,6 +1733,7 @@ function setup()
 end
 
 function teardown()
+  if rep then rep:close() end
   if ctx then ctx:destroy() end
 end
 
@@ -1751,6 +1772,76 @@ function test_reset_handle()
   local h1 = assert(s1:lightuserdata())
   assert_error(function() rep:reset_handle() end)
   assert_true(rep:reset_handle(h1, false, true)) -- close handle
+end
+
+function test_reset_handle_own()
+  local h1 = assert(s1:lightuserdata())
+  local h2 = assert(rep:reset_handle(h1, false)) -- do not close h1 after rep:close()
+  assert_true(rep:close())
+
+  -- anchor h2 to socket
+  rep = zmq.init_socket(h2)
+  rep:reset_handle(h2, true)
+
+  assert_true(s1:bind("inproc://test"))
+end
+
+function test_reset_handle_nochange_own()
+  local h1 = assert(s1:lightuserdata())
+  local h2 = assert(rep:reset_handle(h1)) -- by default rep close handle on `close` method
+  assert_true(rep:close())
+
+  assert_nil(s1:bind("inproc://test"))
+
+  -- close h2
+  s1:reset_handle(h2, true)
+end
+
+function test_reset_handle_nochange2_own()
+  local h1 = assert(s1:lightuserdata())
+  local h2 = assert(rep:reset_handle(h1, false)) -- do not close h1 after rep:close()
+  assert(rep:reset_handle(h1))                   -- do not change on_close bihavior
+
+  assert_true(rep:close())
+
+  -- anchor h2 to socket
+  rep = zmq.init_socket(h2)
+  rep:reset_handle(h2, true)
+
+  assert_true(s1:bind("inproc://test"))
+end
+
+end
+
+local _ENV = TEST_CASE'Recv event'           if true then
+
+local ctx, skt, mon
+local timeout, epselon = 1500, 490
+
+function setup()
+  ctx = assert(is_zcontext(zmq.context()))
+  skt = assert(is_zsocket(ctx:socket(zmq.PUB)))
+  local monitor_endpoint = assert_string(skt:monitor())
+  mon = assert(is_zsocket(ctx:socket{zmq.PAIR,
+    rcvtimeo = timeout, connect = monitor_endpoint
+  }))
+end
+
+function teardown()
+  if ctx then ctx:destroy()             end
+end
+
+function test()
+  local timer = ztimer.monotonic():start()
+  assert_nil( mon:recv_event() )
+  local elapsed = timer:stop()
+  assert(elapsed > (timeout-epselon), "Expeted " .. timeout .. "(+/-" .. epselon .. ") got: " .. elapsed)
+  assert(elapsed < (timeout+epselon), "Expeted " .. timeout .. "(+/-" .. epselon .. ") got: " .. elapsed)
+
+  timer:start()
+  assert_nil( mon:recv_event(zmq.DONTWAIT) )
+  elapsed = timer:stop()
+  assert(elapsed < (epselon), "Expeted less then " .. epselon .. " got: " .. elapsed)
 end
 
 end

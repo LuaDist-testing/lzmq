@@ -8,6 +8,12 @@
 #include <memory.h>
 #include <stdlib.h>
 
+#if defined(_WIN32)
+typedef SOCKET fd_t;
+#else
+typedef int    fd_t;
+#endif
+
 #define DEFINE_SKT_METHOD_1(NAME)              \
                                                \
 static int luazmq_skt_##NAME (lua_State *L) {  \
@@ -73,6 +79,7 @@ static int luazmq_skt_bind_to_random_port (lua_State *L) {
     else{
       int err = zmq_errno();
       if(err == EADDRINUSE) continue;
+      if(err == EACCES) continue;
 
 #ifdef _WIN32
   #if !defined(_MSC_VER) || (_MSC_VER < 1600)
@@ -631,6 +638,18 @@ static int luazmq_skt_get_int (lua_State *L, int option_name) {
   return 1;
 }
 
+static int luazmq_skt_get_fdt (lua_State *L, int option_name) {
+  /** @fixme return lightuserdata because of SOCKET has 64 bit
+   * on Windows x64.
+   */
+  zsocket *skt = luazmq_getsocket(L);
+  fd_t option_value; size_t len = sizeof(option_value);
+  int ret = zmq_getsockopt(skt->skt, option_name, &option_value, &len);
+  if (ret == -1) return luazmq_fail(L, skt);
+  lua_pushnumber(L, (lua_Number)option_value);
+  return 1;
+}
+
 static int luazmq_skt_get_u64 (lua_State *L, int option_name) {
   zsocket *skt = luazmq_getsocket(L);
   uint64_t option_value;  size_t len = sizeof(option_value);
@@ -726,7 +745,7 @@ static int luazmq_skt_set_str_arr (lua_State *L, int option_name) {
   DEFINE_SKT_OPT_RO(rcvmore,                 ZMQ_RCVMORE,                       int       )
 #endif
 #if defined(ZMQ_FD)
-  DEFINE_SKT_OPT_RO(fd,                      ZMQ_FD,                            int       )
+  DEFINE_SKT_OPT_RO(fd,                      ZMQ_FD,                            fdt       )
 #endif
 #if defined(ZMQ_EVENTS)
   DEFINE_SKT_OPT_RO(events,                  ZMQ_EVENTS,                        int       )

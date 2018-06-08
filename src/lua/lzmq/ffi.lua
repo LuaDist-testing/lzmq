@@ -381,7 +381,6 @@ function Socket:handle()
 end
 
 function Socket:reset_handle(h, own, close)
-  if own == nil then own = self._private.dont_destroy end
   local skt = self._private.skt
 
   if self._private.ctx then
@@ -390,10 +389,11 @@ function Socket:reset_handle(h, own, close)
 
   self._private.skt = assert(api.deserialize_ptr(h))
   if own ~= nil then 
-    self._private.dont_destroy = not not own
-    if own then
-      ffi.gc(self._private.skt, api.zmq_close)
-    end
+    self._private.dont_destroy = not own
+  end
+
+  if not self._private.dont_destroy then
+    ffi.gc(self._private.skt, api.zmq_close)
   end
 
   if self._private.ctx then
@@ -451,7 +451,7 @@ function Socket:bind_to_random_port(address, port, tries)
     ok, err = self:bind(a)
     if ok then return port end
 
-    if err:no() ~= ERRORS.EADDRINUSE then
+    if (err:no() ~= ERRORS.EADDRINUSE) and (err:no() ~= ERRORS.EACCES) then
       local msg = err:msg()
       if msg ~= "Address in use" then 
         if not msg:lower():find("address .- in use") then
@@ -576,7 +576,7 @@ end
 if api.zmq_recv_event then
 function Socket:recv_event(flags)
   assert(not self:closed())
-  return api.zmq_recv_event(self._private.skt)
+  return api.zmq_recv_event(self._private.skt, flags)
 end
 end
 
@@ -599,6 +599,7 @@ local function gen_setopt(setopt)
 end
 
 Socket.getopt_int = gen_getopt(api.zmq_skt_getopt_int)
+Socket.getopt_fdt = gen_getopt(api.zmq_skt_getopt_fdt)
 Socket.getopt_i64 = gen_getopt(api.zmq_skt_getopt_i64)
 Socket.getopt_u64 = gen_getopt(api.zmq_skt_getopt_u64)
 Socket.getopt_str = gen_getopt(api.zmq_skt_getopt_str)
@@ -1069,7 +1070,7 @@ end
 
 do -- zmq
 
-zmq._VERSION = "0.3.3"
+zmq._VERSION = "0.3.4"
 
 function zmq.version(unpack)
   local mj,mn,pt = api.zmq_version()
