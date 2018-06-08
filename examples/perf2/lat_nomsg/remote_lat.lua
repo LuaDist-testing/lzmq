@@ -27,17 +27,15 @@ local s = zassert(ctx:socket{zmq.REQ,
   connect = connect_to;
 })
 
-local msg = zassert(zmq.msg_init_data(
-  ("0"):rep(message_size)
-))
+local msg = ("0"):rep(message_size)
 
 -- local watch, us = ztimer.monotonic():start(), 1000
 local watch, us = zmq.utils.stopwatch():start(), 1
 
 for i = 1, roundtrip_count do
-  zassert(msg:send(s))
-  zassert(msg:recv(s))
-  if msg:size() ~= message_size then
+  zassert(s:send(msg))
+  msg = zassert(s:recv())
+  if #msg ~= message_size then
     printf ("message of incorrect size received\n");
     return -1;
   end

@@ -113,6 +113,11 @@ ffi.cdef[[
   int zmq_curve_keypair (char *z85_public_key, char *z85_secret_key);
 ]]
 
+ffi.cdef[[
+  void *zmq_stopwatch_start (void);
+  unsigned long zmq_stopwatch_stop (void *watch_);
+]]
+
 local aint_t          = ffi.typeof("int[1]")
 local aint16_t        = ffi.typeof("int16_t[1]")
 local auint16_t       = ffi.typeof("uint16_t[1]")
@@ -468,15 +473,10 @@ end
 
 end
 
-do -- zmq_recv_event
+-- zmq_recv_event
+do
 
-local function zmq_recv_buf(skt, len, flags)
-  local buf = ffi.new(vla_char_t, len)
-  local flen = libzmq3.zmq_recv(skt, buf, len, flags or 0)
-  if flen < 0 then return end
-  if len > flen then len = flen end
-  return buf, len, flen
-end
+local msg = ffi.new(zmq_msg_t)
 
 if ZMQ_VERSION_MAJOR == 3 then
   ffi.cdef([[
@@ -528,19 +528,21 @@ if ZMQ_VERSION_MAJOR == 3 then
   ]])
   local zmq_event_t = ffi.typeof("zmq_event_t")
   local event_size  = ffi.sizeof(zmq_event_t)
+  local event = ffi.new(zmq_event_t)
 
   function _M.zmq_recv_event(skt, flags)
-    local msg = _M.zmq_msg_init()
+    local msg = _M.zmq_msg_init(msg)
     if not msg then return end
+
     local ret = _M.zmq_msg_recv(msg, skt, flags)
     if ret == -1 then
       _M.zmq_msg_close(msg)
-      return 
+      return
     end
+
     assert(_M.zmq_msg_size(msg) >= event_size)
     assert(_M.zmq_msg_more(msg) == 0)
 
-    local event = ffi.new(zmq_event_t)
     ffi.copy(event, _M.zmq_msg_data(msg), event_size)
     local addr
     if event.data.connected.addr ~= NULL then
@@ -560,24 +562,55 @@ else
   ]])
   local zmq_event_t  = ffi.typeof("zmq_event_t")
   local event_size   = ffi.sizeof(zmq_event_t)
+  local event        = ffi.new(auint16_t)
+  local value        = ffi.new(aint32_t)
 
   function _M.zmq_recv_event(skt, flags)
-    local buf, len, flen = zmq_recv_buf(skt, event_size, flags)
-    if not buf then return end
-    assert(len == (int16_size + int32_size))
+    local msg = _M.zmq_msg_init(msg)
+    if not msg then return end
 
-  
-    local addr = _M.zmq_recv(skt, 1025, _M.FLAGS.ZMQ_DONTWAIT)
-    if not addr then return end
-  
-    local event = ffi.new(auint16_t)
-    local value = ffi.new(aint32_t)
+    local ret = _M.zmq_msg_recv(msg, skt, flags)
+    if ret == -1 then
+      _M.zmq_msg_close(msg)
+      return
+    end
+
+    -- assert(_M.zmq_msg_more(msg) ~= 0)
+
+    local buf  = ffi.cast(pchar_t, _M.zmq_msg_data(msg))
+    assert(_M.zmq_msg_size(msg) == (int16_size + int32_size))
+
     ffi.copy(event, buf, int16_size)
     ffi.copy(value, buf + int16_size, int32_size)
+
+    ret = _M.zmq_msg_recv(msg, skt, _M.FLAGS.ZMQ_DONTWAIT)
+    if ret == -1 then
+      _M.zmq_msg_close(msg)
+      return
+    end
+
+    local addr = _M.zmq_msg_get_data(msg)
+    _M.zmq_msg_close(msg)
+
+    -- assert(_M.zmq_msg_more(msg) == 0)
+
     return event[0], value[0], addr
   end
 
 end
+
+end
+
+-- zmq_stopwatch_start, zmq_stopwatch_stop
+do
+
+  function _M.zmq_stopwatch_start()
+    return libzmq3.zmq_stopwatch_start()
+  end
+
+  function _M.zmq_stopwatch_stop(watch)
+    return tonumber(libzmq3.zmq_stopwatch_stop(watch))
+  end
 
 end
 
@@ -713,6 +746,7 @@ _M.inttoptr = inttoptr
 
 _M.vla_pollitem_t = vla_pollitem_t
 _M.zmq_pollitem_t = zmq_pollitem_t
+_M.zmq_msg_t      = zmq_msg_t
 _M.NULL           = NULL
 _M.bit            = bit
 _M.ZMQ_VERSION_MAJOR, _M.ZMQ_VERSION_MINOR, _M.ZMQ_VERSION_PATCH =

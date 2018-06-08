@@ -46,6 +46,7 @@ local Context = {}
 local Socket  = {}
 local Message = {}
 local Poller  = {}
+local StopWatch = {}
 
 
 local function zerror(...) return Error:new(...) end
@@ -332,6 +333,9 @@ end
 do -- Socket
 Socket.__index = Socket
 
+-- we need only one zmq_msg_t struct to handle all recv
+local tmp_msg = ffi.new(api.zmq_msg_t)
+
 function Socket:closed()
   return not self._private.skt
 end
@@ -391,7 +395,7 @@ end
 
 function Socket:recv(flags)
   assert(not self:closed())
-  local msg = api.zmq_msg_init()
+  local msg = api.zmq_msg_init(tmp_msg)
   if not msg then return nil, zerror() end
   local ret = api.zmq_msg_recv(msg, self._private.skt)
   if ret == -1 then
@@ -591,6 +595,13 @@ end
 do -- Message
 Message.__index = Message
 
+-- we need only one zmq_msg_t struct to handle resize Message.
+-- Because of ffi.gc is too slow tmp_msg is always set 
+-- ffi.gc(tmp_msg, api.zmq_msg_close).
+-- Double call zmq_msg_close is valid.
+local tmp_msg = ffi.gc(api.zmq_msg_init(), api.zmq_msg_close)
+api.zmq_msg_close(tmp_msg);api.zmq_msg_close(tmp_msg);
+
 function Message:new(str_or_len)
   local msg
   if not str_or_len then
@@ -663,17 +674,22 @@ function Message:set_size(nsize)
   assert(not self:closed())
   local osize = self:size()
   if nsize == osize then return true end
-  local msg = api.zmq_msg_init_size(nsize)
+  local msg = api.zmq_msg_init_size(tmp_msg, nsize)
   if nsize > osize then nsize = osize end
 
-  ffi.copy(
-    api.zmq_msg_data(msg),
-    api.zmq_msg_data(self._private.msg),
-    nsize
-  )
+  if nsize > 0 then
+    ffi.copy(
+      api.zmq_msg_data(msg),
+      api.zmq_msg_data(self._private.msg),
+      nsize
+    )
+  end
 
-  api.zmq_msg_close(ffi.gc(self._private.msg, nil))
-  self._private.msg = ffi.gc(msg, api.zmq_msg_close)
+  tmp_msg = self._private.msg
+  api.zmq_msg_close(tmp_msg)
+
+  -- we do not need set ffi.gc because of tmp_msg already set this
+  self._private.msg = msg
   return true
 end
 
@@ -696,17 +712,23 @@ function Message:set_data(pos, str)
     )
     return true
   end
-  local msg = api.zmq_msg_init_size(nsize)
+  local msg = api.zmq_msg_init_size(tmp_msg, nsize)
   if not msg then return nil, zerror() end
   if osize > pos then osize = pos end
-  ffi.copy(
-    api.zmq_msg_data(msg),
-    api.zmq_msg_data(self._private.msg),
-    osize
-  )
+  if osize > 0 then
+    ffi.copy(
+      api.zmq_msg_data(msg),
+      api.zmq_msg_data(self._private.msg),
+      osize
+    )
+  end
   ffi.copy(api.zmq_msg_data(msg, pos - 1),str)
-  api.zmq_close(ffi.gc(self._private.msg, nil))
-  self._private.msg = ffi.gc(msg, api.zmq_msg_close)
+
+  tmp_msg = self._private.msg
+  api.zmq_msg_close(tmp_msg)
+
+  -- we do not need set ffi.gc because of tmp_msg already set this
+  self._private.msg = msg
   return true
 end
 
@@ -909,6 +931,39 @@ end
 
 end
 
+do -- StopWatch
+
+StopWatch.__index = StopWatch
+
+function StopWatch:new()
+  return setmetatable({
+    _private = {}
+  }, self)
+end
+
+function StopWatch:start()
+  assert(not self._private.timer, "timer alrady started")
+  self._private.timer = api.zmq_stopwatch_start()
+  return self
+end
+
+function StopWatch:stop()
+  assert(self._private.timer, "timer not started")
+  local elapsed = api.zmq_stopwatch_stop(self._private.timer)
+  self._private.timer = nil
+  return elapsed
+end
+
+function StopWatch:close()
+  if self._private.timer then
+    api.zmq_stopwatch_stop(self._private.timer)
+    self._private.timer = nil
+  end
+  return true
+end
+
+end
+
 do -- zmq
 
 zmq._VERSION = "0.3.0"
@@ -1005,6 +1060,10 @@ function zmq.curve_keypair(...)
 end
 
 end
+
+zmq.utils = {
+  stopwatch = function() return StopWatch:new() end
+}
 
 end
 

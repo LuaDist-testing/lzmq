@@ -1,18 +1,10 @@
--- This file was automatically generated for the LuaDist project.
-
 package = "lzmq"
-version = "0.3.0-1"
+version = "0.3.1-1"
 
--- LuaDist source
 source = {
-  tag = "0.3.0-1",
-  url = "git://github.com/LuaDist-testing/lzmq.git"
+  url = "https://github.com/moteus/lzmq/archive/v0.3.1.zip",
+  dir = "lzmq-0.3.1",
 }
--- Original source
--- source = {
---   url = "https://github.com/moteus/lzmq/archive/v0.3.0.zip",
---   dir = "lzmq-0.3.0",
--- }
 
 description = {
   summary = "Lua bindings to ZeroMQ",

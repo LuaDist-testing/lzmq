@@ -29,10 +29,9 @@ local s = zassert(ctx:socket{zmq.PULL,
   bind   = bind_to;
 })
 
-local msg = zassert(zmq.msg_init())
-zassert(msg:recv(s))
+local msg = zassert(s:recv())
 
-if msg:size() ~= message_size then
+if #msg ~= message_size then
   print("message of incorrect size received");
   return -1;
 end
@@ -41,8 +40,8 @@ end
 local watch, per_sec = zmq.utils.stopwatch():start(), 1000000
 
 for i = 1, message_count - 1 do
-  zassert(msg:recv(s))
-  if msg:size() ~= message_size then
+  msg = zassert(s:recv())
+  if #msg ~= message_size then
     print("message of incorrect size received");
     return -1;
   end
