@@ -1,18 +1,10 @@
--- This file was automatically generated for the LuaDist project.
-
 package = "lzmq"
-version = "0.3.4-1"
+version = "0.3.5-1"
 
--- LuaDist source
 source = {
-  tag = "0.3.4-1",
-  url = "git://github.com/LuaDist-testing/lzmq.git"
+  url = "https://github.com/moteus/lzmq/archive/v0.3.5.zip",
+  dir = "lzmq-0.3.5",
 }
--- Original source
--- source = {
---   url = "https://github.com/moteus/lzmq/archive/v0.3.4.zip",
---   dir = "lzmq-0.3.4",
--- }
 
 description = {
   summary = "Lua bindings to ZeroMQ",
@@ -49,22 +41,20 @@ build = {
 
   platforms = {
     windows = { modules = {
-      ["lzmq.timer"] = {
-        defines = {'USE_PERF_COUNT'}
-      },
       ["lzmq"] = {
         libraries = {"libzmq"},
       }
     }},
     unix    = { modules = {
-      ["lzmq.timer"] = {
-        defines = {'USE_CLOCK_MONOTONIC', 'USE_GETTIMEOFDAY'},
-        libraries = {"rt"},
-      },
       ["lzmq"] = {
         libraries = {"zmq"},
       }
-    }}
+    }},
+    linux   = { modules = {
+      ["lzmq.timer"] = {
+        libraries = {"rt"},
+      },
+    }},
   },
 
   modules = {

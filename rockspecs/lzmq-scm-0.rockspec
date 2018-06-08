@@ -41,22 +41,20 @@ build = {
 
   platforms = {
     windows = { modules = {
-      ["lzmq.timer"] = {
-        defines = {'USE_PERF_COUNT'}
-      },
       ["lzmq"] = {
         libraries = {"libzmq"},
       }
     }},
     unix    = { modules = {
-      ["lzmq.timer"] = {
-        defines = {'USE_CLOCK_MONOTONIC', 'USE_GETTIMEOFDAY'},
-        libraries = {"rt"},
-      },
       ["lzmq"] = {
         libraries = {"zmq"},
       }
-    }}
+    }},
+    linux   = { modules = {
+      ["lzmq.timer"] = {
+        libraries = {"rt"},
+      },
+    }},
   },
 
   modules = {

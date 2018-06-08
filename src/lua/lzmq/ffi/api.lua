@@ -53,10 +53,73 @@ if not ok then
   else error(libzmq3) end
 end
 
-ffi.cdef[[
-  typedef struct zmq_msg_t {unsigned char _ [32];} zmq_msg_t;
+local aint_t          = ffi.typeof("int[1]")
+local aint16_t        = ffi.typeof("int16_t[1]")
+local auint16_t       = ffi.typeof("uint16_t[1]")
+local aint32_t        = ffi.typeof("int32_t[1]")
+local auint32_t       = ffi.typeof("uint32_t[1]")
+local aint64_t        = ffi.typeof("int64_t[1]")
+local auint64_t       = ffi.typeof("uint64_t[1]")
+local asize_t         = ffi.typeof("size_t[1]")
+local vla_char_t      = ffi.typeof("char[?]")
+local pvoid_t         = ffi.typeof("void*")
+local pchar_t         = ffi.typeof("char*")
+local uintptr_t       = ffi.typeof("uintptr_t")
+local NULL            = ffi.cast(pvoid_t, 0)
+local int16_size      = ffi.sizeof("int16_t")
+local int32_size      = ffi.sizeof("int32_t")
+local ptr_size        = ffi.sizeof(pvoid_t)
+local fd_t, afd_t
+if IS_WINDOWS and ffi.arch == 'x64' then
+  fd_t, afd_t = "uint64_t", auint64_t
+else
+  fd_t, afd_t = "int", aint_t
+end
 
+ffi.cdef[[
   void zmq_version (int *major, int *minor, int *patch);
+]]
+
+local _M = {}
+
+-- zmq_version
+do
+
+function _M.zmq_version()
+  local major, minor, patch = ffi.new(aint_t, 0), ffi.new(aint_t, 0), ffi.new(aint_t, 0)
+  libzmq3.zmq_version(major, minor, patch)
+  return major[0], minor[0], patch[0]
+end
+
+end
+
+local ZMQ_VERSION_MAJOR, ZMQ_VERSION_MINOR, ZMQ_VERSION_PATCH = _M.zmq_version()
+assert(
+  ((ZMQ_VERSION_MAJOR == 3) and (ZMQ_VERSION_MINOR >= 2)) or (ZMQ_VERSION_MAJOR == 4),
+  "Unsupported ZMQ version: " .. ZMQ_VERSION_MAJOR .. "." .. ZMQ_VERSION_MINOR .. "." .. ZMQ_VERSION_PATCH
+)
+
+-- >=
+local is_zmq_ge = function (major, minor, patch)
+  if ZMQ_VERSION_MAJOR < major then return false end
+  if ZMQ_VERSION_MAJOR > major then return true  end
+  if ZMQ_VERSION_MINOR < minor then return false end
+  if ZMQ_VERSION_MINOR > minor then return true  end
+  if ZMQ_VERSION_PATCH < patch then return false  end
+  return true
+end
+
+if is_zmq_ge(4, 1, 0) then
+  ffi.cdef[[
+    typedef struct zmq_msg_t {unsigned char _ [40];} zmq_msg_t;
+  ]]
+else
+  ffi.cdef[[
+    typedef struct zmq_msg_t {unsigned char _ [32];} zmq_msg_t;
+  ]]
+end
+
+ffi.cdef[[
   int zmq_errno (void);
   const char *zmq_strerror (int errnum);
 
@@ -124,32 +187,10 @@ ffi.cdef[[
   unsigned long zmq_stopwatch_stop (void *watch_);
 ]]
 
-local aint_t          = ffi.typeof("int[1]")
-local aint16_t        = ffi.typeof("int16_t[1]")
-local auint16_t       = ffi.typeof("uint16_t[1]")
-local aint32_t        = ffi.typeof("int32_t[1]")
-local auint32_t       = ffi.typeof("uint32_t[1]")
-local aint64_t        = ffi.typeof("int64_t[1]")
-local auint64_t       = ffi.typeof("uint64_t[1]")
-local asize_t         = ffi.typeof("size_t[1]")
-local vla_char_t      = ffi.typeof("char[?]")
-local pvoid_t         = ffi.typeof("void*")
-local pchar_t         = ffi.typeof("char*")
 local zmq_msg_t       = ffi.typeof("zmq_msg_t")
-local uintptr_t       = ffi.typeof("uintptr_t")
 local vla_pollitem_t  = ffi.typeof("zmq_pollitem_t[?]")
 local zmq_pollitem_t  = ffi.typeof("zmq_pollitem_t")
 local pollitem_size   = ffi.sizeof(zmq_pollitem_t)
-local NULL            = ffi.cast(pvoid_t, 0)
-local int16_size      = ffi.sizeof("int16_t")
-local int32_size      = ffi.sizeof("int32_t")
-local ptr_size        = ffi.sizeof(pvoid_t)
-local fd_t, afd_t
-if IS_WINDOWS and ffi.arch == 'x64' then
-  fd_t, afd_t = "uint64_t", auint64_t
-else
-  fd_t, afd_t = "int", aint_t
-end
 
 local function ptrtoint(ptr)
   return tonumber(ffi.cast(uintptr_t, ptr))
@@ -194,16 +235,8 @@ local function pget(lib, elem)
   return nil, err
 end
 
-local _M = {}
-
--- zmq_version, zmq_errno, zmq_strerror, zmq_poll, zmq_device, zmq_proxy
+-- zmq_errno, zmq_strerror, zmq_poll, zmq_device, zmq_proxy
 do
-
-function _M.zmq_version()
-  local major, minor, patch = ffi.new(aint_t, 0), ffi.new(aint_t, 0), ffi.new(aint_t, 0)
-  libzmq3.zmq_version(major, minor, patch)
-  return major[0], minor[0], patch[0]
-end
 
 function _M.zmq_errno()
   return libzmq3.zmq_errno()
@@ -235,12 +268,6 @@ end
 end
 
 end
-
-local ZMQ_VERSION_MAJOR, ZMQ_VERSION_MINOR, ZMQ_VERSION_PATCH = _M.zmq_version()
-assert(
-  ((ZMQ_VERSION_MAJOR == 3) and (ZMQ_VERSION_MINOR >= 2)) or (ZMQ_VERSION_MAJOR == 4),
-  "Unsupported ZMQ version: " .. ZMQ_VERSION_MAJOR .. "." .. ZMQ_VERSION_MINOR .. "." .. ZMQ_VERSION_PATCH
-)
 
 -- zmq_ctx_new, zmq_ctx_term, zmq_ctx_get, zmq_ctx_set
 do
