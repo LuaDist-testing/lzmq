@@ -281,6 +281,10 @@ function test_socket()
   assert_function(skt.send)
   assert_function(skt.send_msg)
   assert_function(skt.send_more)
+  assert_function(skt.sendx)
+  assert_function(skt.sendx_more)
+  assert_function(skt.sendv)
+  assert_function(skt.sendv_more)
   assert_function(skt.recv)
   assert_function(skt.recv_msg)
   assert_function(skt.recv_new_msg)
@@ -427,6 +431,96 @@ function test_socket_options2_ctor()
   ctx:autoclose(skt)
   assert_true(skt:set_unsubscribe{"sub 1", "sub 2"})
   assert_equal(123, skt:get_linger())
+end
+
+function test_socket_ctor_byname()
+  assert_true(skt:close())
+
+  skt = assert(is_zsocket(ctx:socket( "PAIR"   )))
+  assert_equal(zmq.PAIR, skt:type())
+  skt:close()
+  skt = assert(is_zsocket(ctx:socket( "PUB"    )))
+  assert_equal(zmq.PUB, skt:type())
+  skt:close()
+  skt = assert(is_zsocket(ctx:socket( "SUB"    )))
+  assert_equal(zmq.SUB, skt:type())
+  skt:close()
+  skt = assert(is_zsocket(ctx:socket( "REQ"    )))
+  assert_equal(zmq.REQ, skt:type())
+  skt:close()
+  skt = assert(is_zsocket(ctx:socket( "REP"    )))
+  assert_equal(zmq.REP, skt:type())
+  skt:close()
+  skt = assert(is_zsocket(ctx:socket( "DEALER" )))
+  assert_equal(zmq.DEALER, skt:type())
+  skt:close()
+  skt = assert(is_zsocket(ctx:socket( "ROUTER" )))
+  assert_equal(zmq.ROUTER, skt:type())
+  skt:close()
+  skt = assert(is_zsocket(ctx:socket( "PULL"   )))
+  assert_equal(zmq.PULL, skt:type())
+  skt:close()
+  skt = assert(is_zsocket(ctx:socket( "PUSH"   )))
+  assert_equal(zmq.PUSH, skt:type())
+  skt:close()
+  skt = assert(is_zsocket(ctx:socket( "XPUB"   )))
+  assert_equal(zmq.XPUB, skt:type())
+  skt:close()
+  skt = assert(is_zsocket(ctx:socket( "XSUB"   )))
+  assert_equal(zmq.XSUB, skt:type())
+  skt:close()
+  if zmq.STREAM then
+    skt = assert(is_zsocket(ctx:socket( "STREAM" )))
+    assert_equal(zmq.STREAM, skt:type())
+    skt:close()
+  end
+
+  assert_error(function() skt = ctx:socket( "pair" ) end)
+end
+
+function test_socket_ctor_byname2()
+  assert_true(skt:close())
+
+  skt = assert(is_zsocket(ctx:socket{ "PAIR"   }))
+  assert_equal(zmq.PAIR, skt:type())
+  skt:close()
+  skt = assert(is_zsocket(ctx:socket{ "PUB"    }))
+  assert_equal(zmq.PUB, skt:type())
+  skt:close()
+  skt = assert(is_zsocket(ctx:socket{ "SUB"    }))
+  assert_equal(zmq.SUB, skt:type())
+  skt:close()
+  skt = assert(is_zsocket(ctx:socket{ "REQ"    }))
+  assert_equal(zmq.REQ, skt:type())
+  skt:close()
+  skt = assert(is_zsocket(ctx:socket{ "REP"    }))
+  assert_equal(zmq.REP, skt:type())
+  skt:close()
+  skt = assert(is_zsocket(ctx:socket{ "DEALER" }))
+  assert_equal(zmq.DEALER, skt:type())
+  skt:close()
+  skt = assert(is_zsocket(ctx:socket{ "ROUTER" }))
+  assert_equal(zmq.ROUTER, skt:type())
+  skt:close()
+  skt = assert(is_zsocket(ctx:socket{ "PULL"   }))
+  assert_equal(zmq.PULL, skt:type())
+  skt:close()
+  skt = assert(is_zsocket(ctx:socket{ "PUSH"   }))
+  assert_equal(zmq.PUSH, skt:type())
+  skt:close()
+  skt = assert(is_zsocket(ctx:socket{ "XPUB"   }))
+  assert_equal(zmq.XPUB, skt:type())
+  skt:close()
+  skt = assert(is_zsocket(ctx:socket{ "XSUB"   }))
+  assert_equal(zmq.XSUB, skt:type())
+  skt:close()
+  if zmq.STREAM then
+    skt = assert(is_zsocket(ctx:socket{ "STREAM" }))
+    assert_equal(zmq.STREAM, skt:type())
+    skt:close()
+  end
+
+  assert_error(function() skt = ctx:socket{ "pair" } end)
 end
 
 function test_socket_on_close()
@@ -1109,6 +1203,12 @@ function test_sendx()
   assert_equal('hello, world', a .. b .. c)
 end
 
+function test_sendv()
+  assert_true(pub:sendv('hello', ', ', 'world'))
+  local msg = assert_string(sub:recv())
+  assert_equal('hello, world', msg)
+end
+
 function test_sendx_more()
   assert_true(pub:sendx_more('hello', ', '))
   assert_true(pub:send('world'))
@@ -1335,6 +1435,19 @@ function test_echo()
   assert_true(cli:closed())
 end
 
+function test_autoclose_true()
+  local cli = assert(loop:add_new_socket(zmq.REQ, function() end))
+  loop:destroy(false)
+  assert_true(cli:closed())
+end
+
+function test_autoclose_false()
+  local cli = assert(loop:add_new_socket(zmq.REQ, function() end))
+  loop:destroy(true)
+  assert_false(cli:closed())
+  cli:close()
+end
+
 end
 
 local _ENV = TEST_CASE'timer'                if ENABLE then
@@ -1553,6 +1666,41 @@ function test_remove_on_poll()
   local ret
   ret = t[sub1] assert_table(ret) assert_equal("hello", ret[1]) assert_equal(false, ret[2])
   ret = t[sub2] assert_table(ret) assert_equal("hello", ret[1]) assert_equal(false, ret[2])
+  ret = t[sub3] assert_table(ret) assert_equal("hello", ret[1]) assert_equal(false, ret[2])
+end
+
+function test_pollable_interface()
+  local function wrap(s)
+    return {
+      socket = function (self) return s        end;
+      recv   = function (self) return s:recv() end;
+    }
+  end
+
+  local sub1 = wrap(sub1)
+  local sub2 = wrap(sub2)
+  local sub3 = wrap(sub3)
+
+  local t = {}
+  poller:add(sub1, zmq.POLLIN, function(skt) assert_equal(sub1, skt, " expect socket `sub1` got `" .. (names[skt] or tostring(skt))) t[skt] = {skt:recv()} end)
+  poller:add(sub2, zmq.POLLIN, function(skt) assert_equal(sub2, skt, " expect socket `sub2` got `" .. (names[skt] or tostring(skt))) t[skt] = {skt:recv()} end)
+  poller:add(sub3, zmq.POLLIN, function(skt) assert_equal(sub3, skt, " expect socket `sub3` got `" .. (names[skt] or tostring(skt))) t[skt] = {skt:recv()} end)
+
+  assert_true(pub:send("hello"))
+
+  assert_equal(3, poller:poll(100))
+  local ret
+  ret = t[sub1] assert_table(ret) assert_equal("hello", ret[1]) assert_equal(false, ret[2])
+  ret = t[sub2] assert_table(ret) assert_equal("hello", ret[1]) assert_equal(false, ret[2])
+  ret = t[sub3] assert_table(ret) assert_equal("hello", ret[1]) assert_equal(false, ret[2])
+
+  poller:remove(sub2)
+
+  assert_true(pub:send("hello"))
+
+  assert_equal(2, poller:poll(100))
+
+  ret = t[sub1] assert_table(ret) assert_equal("hello", ret[1]) assert_equal(false, ret[2])
   ret = t[sub3] assert_table(ret) assert_equal("hello", ret[1]) assert_equal(false, ret[2])
 end
 
@@ -1788,7 +1936,7 @@ function test_reset_monitor()
   srv:bind_to_random_port("tcp://127.0.0.1")
   ztimer.sleep(500)
 
-  local ev = assert_number(mon:recv_event())
+  local ev, info = assert_number(mon:recv_event())
   assert_equal(zmq.EVENT_LISTENING, ev)
 
   assert(srv:reset_monitor())
@@ -1950,9 +2098,7 @@ function teardown()
 end
 
 function test_identity_fd()
-  local minor, major, patch = zmq.version(true)
-  local ver = minor * 10000 + major * 100 + patch
-  if ver < 40100 then 
+  if not srv.identity_fd then
     return skip("ZMQ_IDENTITY_FD support since ZMQ 4.1.0")
   end
 
