@@ -1,18 +1,10 @@
--- This file was automatically generated for the LuaDist project.
-
 package = "lzmq"
-version = "0.1.2-1"
+version = "0.1.3-1"
 
--- LuaDist source
 source = {
-  tag = "0.1.2-1",
-  url = "git://github.com/LuaDist-testing/lzmq.git"
+  url = "https://github.com/moteus/lzmq/archive/v0.1.3.zip",
+  dir = "lzmq-0.1.3",
 }
--- Original source
--- source = {
---   url = "https://github.com/moteus/lzmq/archive/v0.1.2.zip",
---   dir = "lzmq-0.1.2",
--- }
 
 description = {
   summary = "Lua bindings to ZeroMQ 3",
@@ -26,8 +18,19 @@ dependencies = {
 }
 
 external_dependencies = {
-  ZMQ3 = {
-    header  = "zmq.h",
+  platforms = {
+    windows = {
+      ZMQ3 = {
+        header  = "zmq.h",
+        library = "libzmq3",
+      }
+    };
+    unix = {
+      ZMQ3 = {
+        header  = "zmq.h",
+        -- library = "zmq", -- does not work !?
+      }
+    };
   }
 }
 
@@ -74,8 +77,18 @@ build = {
     ["lzmq.timer"] = {
       sources = {'src/ztimer.c','src/lzutils.c'},
     },
-    ["lzmq.loop"   ] = "lua/lzmq/loop.lua";
-    ["lzmq.poller" ] = "lua/lzmq/poller.lua";
-    ["lzmq.threads"] = "lua/lzmq/threads.lua";
+    ["lzmq.loop"         ] = "src/lua/lzmq/loop.lua";
+    ["lzmq.poller"       ] = "src/lua/lzmq/poller.lua";
+    ["lzmq.threads"      ] = "src/lua/lzmq/threads.lua";
+    ["lzmq.ffi"          ] = "src/lua/lzmq/ffi.lua";
+    ["lzmq.ffi.api"      ] = "src/lua/lzmq/ffi/api.lua";
+    ["lzmq.ffi.error"    ] = "src/lua/lzmq/ffi/error.lua";
+    ["lzmq.ffi.loop"     ] = "src/lua/lzmq/ffi/loop.lua";
+    ["lzmq.ffi.poller"   ] = "src/lua/lzmq/ffi/poller.lua";
+    ["lzmq.ffi.timer"    ] = "src/lua/lzmq/ffi/timer.lua";
+    ["lzmq.ffi.threads"  ] = "src/lua/lzmq/ffi/threads.lua";
+    ["lzmq.llthreads.ex" ] = "src/lua/lzmq/llthreads/ex.lua";
+    ["lzmq.impl.threads" ] = "src/lua/lzmq/impl/threads.lua";
+    ["lzmq.impl.loop"    ] = "src/lua/lzmq/impl/loop.lua";
   },
 }
